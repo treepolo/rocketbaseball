@@ -230,6 +230,18 @@
               <input type="checkbox" id="ctrl-trail-permanent" style="width: auto;">
               <label for="ctrl-trail-permanent" style="margin-bottom: 0;">永久保留 (疊加軌跡)</label>
             </div>
+            <div style="margin-top: 15px; border-top: 1px solid var(--border-color); padding-top: 10px;">
+              <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px;">
+                <input type="checkbox" id="ctrl-uncertainty" style="width: auto;">
+                <label for="ctrl-uncertainty"
+                  style="margin-bottom: 0; color: #ffaa44; font-weight: bold;">開啟參數不確定性</label>
+              </div>
+              <div class="slider-row" id="uncertainty-slider-container" style="opacity: 0.5; pointer-events: none;">
+                <label for="ctrl-variance" style="flex:1; margin-bottom: 0; font-size: 11px;">變異程度</label>
+                <input type="range" id="ctrl-variance" min="1" max="100" value="50" step="1" style="flex: 2;">
+                <span id="variance-val" style="width: 30px; text-align: right; font-size: 11px;">50%</span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -266,6 +278,22 @@
       <span id="fps-counter">FPS: --</span>
     </div>
   </div>
+
+  <script>
+    document.getElementById('ctrl-uncertainty').addEventListener('change', (e) => {
+      const sliderCont = document.getElementById('uncertainty-slider-container');
+      if (e.target.checked) {
+        sliderCont.style.opacity = '1';
+        sliderCont.style.pointerEvents = 'auto';
+      } else {
+        sliderCont.style.opacity = '0.5';
+        sliderCont.style.pointerEvents = 'none';
+      }
+    });
+    document.getElementById('ctrl-variance').addEventListener('input', (e) => {
+      document.getElementById('variance-val').innerText = e.target.value + '%';
+    });
+  </script>
 
   <script type="module" src="/src/main.js"></script>
 </body>

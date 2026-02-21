@@ -155,66 +155,380 @@ function buildAtmosphere(g) {
 
 // ========== SPACE ==========
 function buildSpaceEnvironment(scene) {
-    const SKY = 5e9;
-    // Stars
     const rng = mulberry32(12345);
-    const N = 15000;
-    const pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
-    for (let i = 0; i < N; i++) {
-        const th = Math.acos(2 * rng() - 1), ph = rng() * Math.PI * 2, r = SKY * (0.8 + rng() * 0.4);
-        pos[i * 3] = r * Math.sin(th) * Math.cos(ph);
-        pos[i * 3 + 1] = r * Math.sin(th) * Math.sin(ph);
-        pos[i * 3 + 2] = r * Math.cos(th);
-        const t = rng();
-        if (t < 0.5) { col[i * 3] = 1; col[i * 3 + 1] = 1; col[i * 3 + 2] = 1; }
-        else if (t < 0.7) { col[i * 3] = 0.7; col[i * 3 + 1] = 0.8; col[i * 3 + 2] = 1; }
-        else if (t < 0.85) { col[i * 3] = 1; col[i * 3 + 1] = 0.95; col[i * 3 + 2] = 0.7; }
-        else { col[i * 3] = 1; col[i * 3 + 1] = 0.6; col[i * 3 + 2] = 0.3; }
-    }
-    const sg = new THREE.BufferGeometry();
-    sg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    sg.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    scene.add(new THREE.Points(sg, new THREE.PointsMaterial({
-        size: 2000000, vertexColors: true, transparent: true, opacity: 0.9,
-        sizeAttenuation: true, depthWrite: false,
-    })));
 
-    // Milky Way band
-    const rng2 = mulberry32(77777);
-    const M = 8000, mp = new Float32Array(M * 3), mc = new Float32Array(M * 3);
-    for (let i = 0; i < M; i++) {
-        const ba = (rng2() - 0.5) * 0.3, la = rng2() * Math.PI * 2;
-        let x = SKY * 0.9 * Math.cos(la) * Math.cos(ba);
-        let y = SKY * 0.9 * Math.sin(ba);
-        let z = SKY * 0.9 * Math.sin(la) * Math.cos(ba);
-        const tilt = Math.PI / 3;
-        const ry = y * Math.cos(tilt) - z * Math.sin(tilt);
-        const rz = y * Math.sin(tilt) + z * Math.cos(tilt);
-        mp[i * 3] = x; mp[i * 3 + 1] = ry; mp[i * 3 + 2] = rz;
-        const b = 0.4 + rng2() * 0.4;
-        mc[i * 3] = b; mc[i * 3 + 1] = b * 0.95; mc[i * 3 + 2] = b;
-    }
-    const mg = new THREE.BufferGeometry();
-    mg.setAttribute('position', new THREE.BufferAttribute(mp, 3));
-    mg.setAttribute('color', new THREE.BufferAttribute(mc, 3));
-    scene.add(new THREE.Points(mg, new THREE.PointsMaterial({
-        size: 1200000, vertexColors: true, transparent: true, opacity: 0.6,
-        sizeAttenuation: true, depthWrite: false,
-    })));
+    // 0. Cosmic Background Noise Texture (Subtle)
+    const bgGeo = new THREE.SphereGeometry(1e19, 32, 32);
+    const bgMat = new THREE.ShaderMaterial({
+        vertexShader: `
+            varying vec3 vPos;
+            void main() {
+                vPos = position;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            varying vec3 vPos;
+            float random(vec3 p) {
+                return fract(sin(dot(p, vec3(12.9898, 78.233, 45.164))) * 43758.5453);
+            }
+            float noise(vec3 p) {
+                vec3 i = floor(p);
+                vec3 f = fract(p);
+                f = f * f * (3.0 - 2.0 * f);
+                float n = mix(
+                    mix(mix(random(i + vec3(0,0,0)), random(i + vec3(1,0,0)), f.x),
+                        mix(random(i + vec3(0,1,0)), random(i + vec3(1,1,0)), f.x), f.y),
+                    mix(mix(random(i + vec3(0,0,1)), random(i + vec3(1,0,1)), f.x),
+                        mix(random(i + vec3(0,1,1)), random(i + vec3(1,1,1)), f.x), f.y), f.z);
+                return n;
+            }
+            float fbm(vec3 p) {
+                float v = 0.0;
+                float a = 0.5;
+                for (int i=0; i<4; i++) {
+                    v += a * noise(p);
+                    p = p * 2.1;
+                    a *= 0.5;
+                }
+                return v;
+            }
+            void main() {
+                // Large scale procedural volumetric nebula texture mapping
+                float n = fbm(normalize(vPos) * 3.0);
+                float n2 = fbm(normalize(vPos) * 10.0 + vec3(n));
+                float finalNoise = (n * 0.6 + n2 * 0.4);
+                // Background nebula, brighter to ensure visibility but darker than foreground ones
+                vec3 darkSpace = vec3(0.01, 0.01, 0.02);
+                vec3 nebulaTint = vec3(0.08, 0.12, 0.22);
+                vec3 col = mix(darkSpace, nebulaTint, smoothstep(0.1, 0.7, finalNoise));
+                gl_FragColor = vec4(col * 1.5, 1.0); // 1.5x boost for background specifically 
+            }
+        `,
+        side: THREE.BackSide,
+        depthWrite: false
+    });
+    scene.add(new THREE.Mesh(bgGeo, bgMat));
+
+    // 1. Solar System Sphere (Outer bounds 1e11 ~ 5e11 ft)
+    const sunDist = 5e11;
+    const sunGeo = new THREE.SphereGeometry(2e9, 64, 64);
+    const sunMat = new THREE.MeshBasicMaterial({ color: 0xffffff }); // Absolute white core
+    const sunMesh = new THREE.Mesh(sunGeo, sunMat);
+    sunMesh.position.set(-sunDist * 0.8, sunDist * 0.1, -sunDist * 0.5);
+
+    // Sun Corona / Glow (massive)
+    const glowGeo = new THREE.SphereGeometry(sunDist * 0.05, 32, 32);
+    const glowMat = new THREE.MeshBasicMaterial({ color: 0xffddaa, transparent: true, opacity: 0.15, blending: THREE.AdditiveBlending });
+    const sunGlow = new THREE.Mesh(glowGeo, glowMat);
+    sunGlow.scale.set(6, 6, 6);
+    sunMesh.add(sunGlow);
+    scene.add(sunMesh);
 
     // Moon
-    const moonGeo = new THREE.SphereGeometry(5.7e6, 24, 24);
-    const moonMesh = new THREE.Mesh(moonGeo, new THREE.MeshStandardMaterial({ color: 0xddddcc, roughness: 0.9 }));
-    moonMesh.position.set(8e8, 1e9, 3e8);
+    const moonDist = 1.2e9;
+    const moonGeo = new THREE.SphereGeometry(5.7e6, 32, 32);
+    const moonMat = new THREE.MeshStandardMaterial({
+        color: 0xddddcc, roughness: 1.0, emissive: 0x222211, emissiveIntensity: 0.3
+    });
+    const moonMesh = new THREE.Mesh(moonGeo, moonMat);
+    moonMesh.position.set(moonDist * 0.5, moonDist * 0.6, moonDist * 0.2);
     scene.add(moonMesh);
 
-    // Planets (small dots)
-    [[0xcc5533, 8e10, [-.8, .2, .6]], [0xddbb88, 1.5e11, [.5, .1, -.8]], [0xffffee, 3e10, [.6, .4, .7]]].forEach(([c, d, dir]) => {
-        const m = new THREE.Mesh(new THREE.SphereGeometry(d * 0.003, 12, 12), new THREE.MeshBasicMaterial({ color: c }));
+    // Planets
+    [[0xcc5533, 8e10, [-.8, .2, .6]], [0xddbb88, 3e11, [.5, .1, -.8]], [0xffffee, 6e10, [.6, .4, .7]]].forEach(([c, d, dir]) => {
+        const m = new THREE.Mesh(new THREE.SphereGeometry(d * 0.005, 24, 24), new THREE.MeshBasicMaterial({ color: c }));
         m.position.set(dir[0] * d, dir[1] * d, dir[2] * d);
         scene.add(m);
     });
+    // Shader for crisp stars with genuine distinct cross spikes (十字星芒)
+    const starMat = new THREE.ShaderMaterial({
+        vertexShader: `
+            attribute float starSize;
+            attribute vec3 starColor;
+            attribute float heroStar;
+            varying vec3 vColor;
+            varying float vHero;
+            void main() {
+                vColor = starColor;
+                vHero = heroStar;
+                vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+                gl_PointSize = starSize;
+                gl_Position = projectionMatrix * mvPos;
+            }
+        `,
+        fragmentShader: `
+            varying vec3 vColor;
+            varying float vHero;
+            void main() {
+                vec2 xy = gl_PointCoord.xy - vec2(0.5);
+                float ll = length(xy);
+                if (ll > 0.5) discard;
+                
+                // Base glowing circular body
+                float core = smoothstep(0.5, 0.05, ll) * 0.8;
+                
+                float finalAlpha = core;
+
+                if (vHero > 0.5) {
+                    float ax = abs(xy.x);
+                    float ay = abs(xy.y);
+                    // Sharpness: 35.0 (Thin but visible). Reach: 2.1 (Full length of point)
+                    float spikeX = max(0.0, 1.0 - ax * 35.0) * max(0.0, 1.0 - ay * 2.1);
+                    float spikeY = max(0.0, 1.0 - ay * 35.0) * max(0.0, 1.0 - ax * 2.1);
+                    
+                    float dx = abs(xy.x + xy.y) * 0.707;
+                    float dy = abs(xy.x - xy.y) * 0.707;
+                    float dSpike = max(0.0, 1.0 - dx * 25.0) * max(0.0, 1.0 - dy * 5.0) +
+                                   max(0.0, 1.0 - dy * 25.0) * max(0.0, 1.0 - dx * 5.0);
+
+                    finalAlpha = max(finalAlpha, (spikeX + spikeY) * 4.0 + dSpike * 1.2);
+                }
+                
+                if (finalAlpha < 0.01) discard;
+                // apply global 1.2x brightness
+                gl_FragColor = vec4(vColor * 1.2, finalAlpha);
+            }
+        `,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+    });
+
+    // Shader for highly detailed volumetric nebulae using 2D Fractal Brownian Motion (FBM)
+    const nebulaMat = new THREE.ShaderMaterial({
+        vertexShader: `
+            attribute float starSize;
+            attribute vec3 starColor;
+            attribute float seed;
+            varying vec3 vColor;
+            varying float vSeed;
+            void main() {
+                vColor = starColor;
+                vSeed = seed;
+                vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+                gl_PointSize = starSize;
+                gl_Position = projectionMatrix * mvPos;
+            }
+        `,
+        fragmentShader: `
+            varying vec3 vColor;
+            varying float vSeed;
+
+            float random(vec2 st) {
+                return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
+            }
+            float noise(vec2 st) {
+                vec2 i = floor(st);
+                vec2 f = fract(st);
+                float a = random(i);
+                float b = random(i + vec2(1.0, 0.0));
+                float c = random(i + vec2(0.0, 1.0));
+                float d = random(i + vec2(1.0, 1.0));
+                vec2 u = f * f * (3.0 - 2.0 * f);
+                return mix(a, b, u.x) + (c - a)* u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+            }
+            float fbm(vec2 st) {
+                float v = 0.0;
+                float a = 0.5;
+                vec2 shift = vec2(100.0);
+                // Rotate to reduce axial bias
+                mat2 rot = mat2(cos(0.5), sin(0.5), -sin(0.5), cos(0.5));
+                for (int i = 0; i < 4; ++i) {
+                    v += a * noise(st);
+                    st = rot * st * 2.0 + shift;
+                    a *= 0.5;
+                }
+                return v;
+            }
+
+            void main() {
+                vec2 xy = gl_PointCoord.xy - vec2(0.5);
+                float ll = length(xy);
+                if(ll > 0.5) discard;
+                
+                // Envelope circle - soft falloff
+                float envelope = smoothstep(0.5, 0.0, ll);
+                
+                // Generate complex internal cloud structure
+                vec2 uv = gl_PointCoord.xy * 2.0 + vec2(vSeed * 13.0, vSeed * 7.0);
+                float n = fbm(uv);
+                
+                // Add swirly wisps by shifting UV based on noise
+                float n2 = fbm(uv + n * 3.0);
+
+                // Multiply by envelope to give distinct structural edge 
+                float alpha = envelope * n2; 
+                
+                // Create cloud clumps rather than rings
+                alpha = smoothstep(0.3, 0.8, alpha);
+                
+                if (alpha < 0.01) discard;
+                gl_FragColor = vec4(vColor, alpha * 0.48); // 1.2x boost (0.4 -> 0.48)
+            }
+        `,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+    });
+
+    const dpr = window.devicePixelRatio || 1.0;
+    const noiseGen = makeNoise2D(777);
+
+    // General generator for all star formations
+    const buildStarCloud = (N, rMin, rMax, isGalaxy, rScale = 1.0) => {
+        const pos = new Float32Array(N * 3), col = new Float32Array(N * 3), sizes = new Float32Array(N), heroStars = new Float32Array(N);
+        const MW_RAD = 1.2e16;
+
+        for (let i = 0; i < N; i++) {
+            // Power-law distribution
+            // Increase maximum size dramatically so cross spikes are painted cleanly across wide pixel space
+            const sizeParam = Math.pow(rng(), 10);
+            sizes[i] = (2.0 + sizeParam * 22.0) * dpr;
+
+            // Only 1% of stars potentially get hero spikes
+            heroStars[i] = (rng() < 0.01) ? 1.0 : 0.0;
+
+            let x, y, z, rC = 1, gC = 1, bC = 1;
+
+            if (isGalaxy) {
+                const ba = (rng() - 0.5) * 0.25 * (rng() > 0.6 ? 1 : 0.3);
+                const la = rng() * Math.PI * 2;
+                const dist = MW_RAD * Math.pow(rng(), 1.5) * rScale;
+
+                x = dist * Math.cos(la) * Math.cos(ba);
+                y = dist * Math.sin(ba);
+                z = dist * Math.sin(la) * Math.cos(ba);
+
+                y += (noiseGen(x * 1e-15, z * 1e-15) * dist * 0.1);
+
+                const tilt = Math.PI / 3.2;
+                const ry = y * Math.cos(tilt) - z * Math.sin(tilt);
+                const rz = y * Math.sin(tilt) + z * Math.cos(tilt);
+                x = x; y = ry; z = rz;
+
+                const isCore = (dist < MW_RAD * 0.2);
+                const dust = noiseGen(x * 2.5e-15, z * 2.5e-15);
+
+                if (isCore) { rC = 1.0; gC = 0.85; bC = 0.6; }
+                else { rC = 0.5; gC = 0.7; bC = 1.0; }
+
+                if (dust > 0.35) {
+                    rC *= 0.05; gC *= 0.05; bC *= 0.05;
+                } else {
+                    const intensity = (0.2 + sizeParam * 0.8) * (1.1 - dust) * 1.5;
+                    rC *= intensity * 0.4; gC *= intensity * 0.4; bC *= intensity * 0.4;
+                }
+            } else {
+                const th = Math.acos(2 * rng() - 1), ph = rng() * Math.PI * 2;
+                const r = rMin + Math.pow(rng(), 1.2) * (rMax - rMin);
+                x = r * Math.sin(th) * Math.cos(ph);
+                y = r * Math.sin(th) * Math.sin(ph);
+                z = r * Math.cos(th);
+
+                const type = rng();
+                if (type < 0.15) { rC = 0.6; gC = 0.8; bC = 1.0; }
+                else if (type < 0.55) { rC = 1.0; gC = 1.0; bC = 1.0; }
+                else if (type < 0.85) { rC = 1.0; gC = 0.9; bC = 0.6; }
+                else { rC = 1.0; gC = 0.5; bC = 0.3; }
+
+                const brightness = (0.4 + sizeParam * 1.6) * 1.5;
+                rC *= brightness; gC *= brightness; bC *= brightness;
+            }
+
+            pos[i * 3] = x; pos[i * 3 + 1] = y; pos[i * 3 + 2] = z;
+            col[i * 3] = rC; col[i * 3 + 1] = gC; col[i * 3 + 2] = bC;
+        }
+
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        geo.setAttribute('starColor', new THREE.BufferAttribute(col, 3));
+        geo.setAttribute('starSize', new THREE.BufferAttribute(sizes, 1));
+        geo.setAttribute('heroStar', new THREE.BufferAttribute(heroStars, 1));
+        scene.add(new THREE.Points(geo, starMat));
+    };
+
+    // Advanced Nebula Generator (Procedural distinct clouds)
+    const buildNebulae = (M, distributionType) => {
+        const mp = new Float32Array(M * 3), mc = new Float32Array(M * 3);
+        const sizes = new Float32Array(M), seeds = new Float32Array(M);
+        const MW_RAD = 1.2e16;
+
+        for (let i = 0; i < M; i++) {
+            let x, y, z;
+
+            if (distributionType === 'galactic') {
+                const ba = (rng() - 0.5) * 0.4;
+                const la = rng() * Math.PI * 2;
+                const dist = MW_RAD * Math.pow(rng(), 0.9);
+                x = dist * Math.cos(la) * Math.cos(ba);
+                y = dist * Math.sin(ba);
+                z = dist * Math.sin(la) * Math.cos(ba);
+
+                y += (noiseGen(x * 1e-15, z * 1e-15) * dist * 0.2);
+
+                const tilt = Math.PI / 3.2;
+                const ry = y * Math.cos(tilt) - z * Math.sin(tilt);
+                const rz = y * Math.sin(tilt) + z * Math.cos(tilt);
+                x = x; y = ry; z = rz;
+            } else if (distributionType === 'independent') {
+                // Completely independent clusters far away from the galactic plane
+                const th = Math.acos(2 * rng() - 1), ph = rng() * Math.PI * 2;
+                const r = 3e16 + Math.pow(rng(), 1.5) * 6e16; // 3e16 ~ 9e16 ft away
+                x = r * Math.sin(th) * Math.cos(ph);
+                y = r * Math.sin(th) * Math.sin(ph);
+                z = r * Math.cos(th);
+            }
+
+            mp[i * 3] = x; mp[i * 3 + 1] = y; mp[i * 3 + 2] = z;
+
+            const type = rng();
+            let rC, gC, bC;
+            if (type < 0.2) { rC = 0.8; gC = 0.2; bC = 0.3; }
+            else if (type < 0.4) { rC = 0.2; gC = 0.5; bC = 0.9; }
+            else if (type < 0.6) { rC = 0.6; gC = 0.2; bC = 0.8; }
+            else if (type < 0.8) { rC = 0.2; gC = 0.8; bC = 0.7; }
+            else { rC = 0.9; gC = 0.7; bC = 0.4; }
+
+            // Desaturate, make softer, and boost 1.2x brightness
+            rC = (rC * 0.4 + 0.15) * 1.2;
+            gC = (gC * 0.4 + 0.15) * 1.2;
+            bC = (bC * 0.4 + 0.15) * 1.2;
+
+            const opac = 0.15 + rng() * 0.5; // significantly lower opacity to prevent overexposure
+            mc[i * 3] = rC * opac; mc[i * 3 + 1] = gC * opac; mc[i * 3 + 2] = bC * opac;
+
+            // Vastly varying gigantic sizes: 80px up to majestic 800px clouds on screen
+            sizes[i] = (80.0 + Math.pow(rng(), 1.5) * 720.0) * dpr;
+            seeds[i] = rng() * 100.0;
+        }
+
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(mp, 3));
+        geo.setAttribute('starColor', new THREE.BufferAttribute(mc, 3));
+        geo.setAttribute('starSize', new THREE.BufferAttribute(sizes, 1));
+        geo.setAttribute('seed', new THREE.BufferAttribute(seeds, 1));
+        scene.add(new THREE.Points(geo, nebulaMat));
+    };
+
+    // --- RENDER LAYERS ---
+
+    // 2. Local Stellar Neighborhood (1e12 ~ 5e15 ft)
+    buildStarCloud(40000, 1e12, 1e15, false); // Huge number of background stars
+
+    // 3. Milky Way Galaxy Structure & Dust Clouds (Tiny individual stars)
+    buildStarCloud(60000, 0, 0, true, 1.0);   // Huge diffuse galactic disk
+    buildStarCloud(35000, 0, 0, true, 0.5);   // Dense spiral arms
+    buildStarCloud(15000, 0, 0, true, 0.15);  // Blazing galactic center
+
+    // 4. Highly detailed Fractal Volumetric Nebulae
+    buildNebulae(120, 'galactic');    // Rare but massive nebulae
+    buildNebulae(60, 'independent'); // Distant independent nebulae
+
+    // 5. Distant Galaxies & Background Deep Space (1e16 ~ 1e19 ft)
+    buildStarCloud(30000, 1e16, 5e18, false); // Deep intergalactic space
 }
+
 
 // ========== PROCEDURAL WORLD ==========
 function buildProceduralWorld(group) {

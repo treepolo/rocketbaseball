@@ -281,8 +281,8 @@ export function calculateTrajectory(params) {
         // Prevent infinite loops / memory overflow based on user set limit
         if (t > simTimeLimit) break;
 
-        // Escape condition if ball goes out of huge bounds (10 million ft)
-        if (Math.abs(x) > 10000000 || Math.abs(y) > 10000000) break;
+        // Removed distance bounds check to allow unlimited travel length
+
 
         // Euler integration step
         x = x + vx * dt + 0.5 * ax * dt * dt;

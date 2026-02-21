@@ -12,11 +12,8 @@ import { buildStadium } from './stadium.js';
 // ============================================
 let scene, camera, renderer, controls;
 let clock, animationId;
-let ballMesh, trailLine, trailPoints = [];
-let frozenTrails = []; // Array of frozen trail Line objects (for permanent mode)
-let trajectoryData = null;
-let currentFrame = 0;
-let simulationTime = 0;
+let ballTemplate;
+let activeBalls = [];
 let isAnimating = false;
 let fpsFrames = 0, fpsTime = 0;
 
@@ -56,7 +53,7 @@ async function init() {
         50,
         window.innerWidth / window.innerHeight,
         0.5,
-        100000000
+        1e20 // Far clipping plane: intergalactic scale
     );
 
     // Renderer
@@ -89,7 +86,7 @@ async function init() {
     };
 
     controls.enableDamping = false; // Disable inertia
-    controls.maxDistance = 1500;
+    controls.maxDistance = 1e20; // Unlimited scroll out
     controls.minDistance = 0.5;
     controls.maxPolarAngle = Math.PI; // Remove upward looking limit
 
@@ -110,9 +107,6 @@ async function init() {
 
     // ---- BASEBALL ----
     createBall();
-
-    // ---- TRAIL ----
-    createTrailLine();
 
     updateLoadingBar(95, '初始化使用者介面...');
 
@@ -156,8 +150,8 @@ function createBall() {
         emissiveIntensity: 0.1,
     });
 
-    ballMesh = new THREE.Mesh(ballGeo, ballMat);
-    ballMesh.castShadow = true;
+    ballTemplate = new THREE.Mesh(ballGeo, ballMat);
+    ballTemplate.castShadow = true;
 
     // Add red seams
     const seamGeo = new THREE.TorusGeometry(ballRadius * 0.85, ballRadius * 0.04, 8, 32);
@@ -166,11 +160,11 @@ function createBall() {
         roughness: 0.8,
     });
     const seam1 = new THREE.Mesh(seamGeo, seamMat);
-    ballMesh.add(seam1);
+    ballTemplate.add(seam1);
 
     const seam2 = new THREE.Mesh(seamGeo.clone(), seamMat);
     seam2.rotation.x = Math.PI / 2;
-    ballMesh.add(seam2);
+    ballTemplate.add(seam2);
 
     // Glow sprite to make ball highly visible against backgrounds
     const glowCanvas = document.createElement('canvas');
@@ -192,11 +186,11 @@ function createBall() {
     });
     const glowSprite = new THREE.Sprite(glowMat);
     glowSprite.scale.set(3, 3, 1);
-    ballMesh.add(glowSprite);
+    ballTemplate.add(glowSprite);
 
     // Initial position (hide)
-    ballMesh.visible = false;
-    scene.add(ballMesh);
+    ballTemplate.visible = false;
+    // We don't add ballTemplate to the scene directly. We clone it in launchBall.
 }
 
 // ============================================
@@ -210,36 +204,42 @@ function createTrailLine() {
         opacity: 0.95,
     });
     const trailGeo = new THREE.BufferGeometry();
-    trailLine = new THREE.Line(trailGeo, trailMat);
-    trailLine.frustumCulled = false;
-    scene.add(trailLine);
+    const tLine = new THREE.Line(trailGeo, trailMat);
+    tLine.frustumCulled = false;
+    scene.add(tLine);
+    return tLine;
 }
 
-function updateTrail(newPoint, trailDuration) {
+function updateTrail(ballObj, newPoint, trailDuration, isFinished) {
     const isPermanent = document.getElementById('ctrl-trail-permanent').checked;
 
-    trailPoints.push({
-        pos: newPoint.clone(),
-        time: performance.now() / 1000
-    });
+    if (!isFinished && newPoint) {
+        ballObj.trailPoints.push({
+            pos: newPoint.clone(),
+            time: performance.now() / 1000
+        });
+    }
 
     if (!isPermanent) {
         // Remove old points
         const now = performance.now() / 1000;
-        trailPoints = trailPoints.filter(p => now - p.time < trailDuration);
+        ballObj.trailPoints = ballObj.trailPoints.filter(p => now - p.time < trailDuration);
     }
 
     // Update geometry
-    if (trailPoints.length >= 2) {
-        const positions = new Float32Array(trailPoints.length * 3);
-        trailPoints.forEach((p, i) => {
+    if (ballObj.trailPoints.length >= 2) {
+        const positions = new Float32Array(ballObj.trailPoints.length * 3);
+        ballObj.trailPoints.forEach((p, i) => {
             positions[i * 3] = p.pos.x;
             positions[i * 3 + 1] = p.pos.y;
             positions[i * 3 + 2] = p.pos.z;
         });
-        trailLine.geometry.dispose();
-        trailLine.geometry = new THREE.BufferGeometry();
-        trailLine.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        ballObj.trailLine.geometry.dispose();
+        ballObj.trailLine.geometry = new THREE.BufferGeometry();
+        ballObj.trailLine.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    } else {
+        ballObj.trailLine.geometry.dispose();
+        ballObj.trailLine.geometry = new THREE.BufferGeometry();
     }
 }
 
@@ -250,16 +250,30 @@ function launchBall() {
     // Get parameters from UI
     const mode = document.getElementById('mode-pitcher').classList.contains('active') ? 'pitcher' : 'batter';
 
-    const speed = parseFloat(document.getElementById('ctrl-speed-num').value);
-    const backspin = parseFloat(document.getElementById('ctrl-backspin-num').value);
-    const sidespin = parseFloat(document.getElementById('ctrl-sidespin-num').value);
-    const gyroAngle = parseFloat(document.getElementById('ctrl-gyroangle-num').value) || 0;
-    const totalSpin = parseFloat(document.getElementById('ctrl-spinrate-num').value) || 0;
-    const gyrospin = totalSpin * Math.sin(gyroAngle * Math.PI / 180);
-    const simTimeLimit = parseFloat(document.getElementById('ctrl-sim-time-num').value) || 150;
+    let speed = parseFloat(document.getElementById('ctrl-speed-num').value);
+    let backspin = parseFloat(document.getElementById('ctrl-backspin-num').value);
+    let sidespin = parseFloat(document.getElementById('ctrl-sidespin-num').value);
+    let gyroAngle = parseFloat(document.getElementById('ctrl-gyroangle-num').value) || 0;
+    let totalSpin = parseFloat(document.getElementById('ctrl-spinrate-num').value) || 0;
+    let theta = parseFloat(document.getElementById('ctrl-angle-num').value);
+    let phi = parseFloat(document.getElementById('ctrl-direction-num').value);
 
-    const theta = parseFloat(document.getElementById('ctrl-angle-num').value);
-    const phi = parseFloat(document.getElementById('ctrl-direction-num').value);
+    // Apply uncertainty if enabled
+    if (document.getElementById('ctrl-uncertainty').checked) {
+        const varianceVal = parseFloat(document.getElementById('ctrl-variance').value) / 100;
+        const rng = () => (Math.random() - 0.5) * 2; // -1 to 1
+
+        speed += speed * 0.1 * varianceVal * rng();
+        totalSpin += totalSpin * 0.2 * varianceVal * rng();
+        backspin += backspin * 0.2 * varianceVal * rng();
+        sidespin += sidespin * 0.2 * varianceVal * rng();
+        gyroAngle += 15 * varianceVal * rng();
+        theta += 5 * varianceVal * rng();
+        phi += 5 * varianceVal * rng();
+    }
+
+    let gyrospin = totalSpin * Math.sin(gyroAngle * Math.PI / 180);
+    const simTimeLimit = parseFloat(document.getElementById('ctrl-sim-time-num').value) || 150;
 
     // Position
     const forwardOffset = parseFloat(document.getElementById('ctrl-px-num').value);
@@ -268,74 +282,45 @@ function launchBall() {
 
     let x0, y0, z0;
     if (mode === 'pitcher') {
-        // Pitcher mode: release from mound area
-        // Mound is at y=60.5 ft. The pitch is usually released 5.5-6.5 ft IN FRONT of the rubber.
         y0 = 60.5 - forwardOffset;
-        z0 = 0.833 + heightOffset; // Mound height + offset
+        z0 = 0.833 + heightOffset;
         x0 = lateralOffset;
     } else {
-        // Batter mode: from home plate center
         y0 = 0;
-        z0 = 2.0; // Contact height roughly 2ft
+        z0 = 2.0;
         x0 = 0;
     }
 
     // Calculate trajectory
     const dt = mode === 'pitcher' ? 0.001 : 0.005;
-    trajectoryData = calculateTrajectory({
-        speed,
-        theta,
-        phi,
-        backspin,
-        sidespin,
-        gyrospin,
-        x0,
-        y0,
-        z0,
-        mode,
-        dt,
-        simTimeLimit,
-        flag: 1,
-        elevFt: 23, // Petco Park elevation
+    const trajectoryData = calculateTrajectory({
+        speed, theta, phi, backspin, sidespin, gyrospin,
+        x0, y0, z0, mode, dt, simTimeLimit, flag: 1, elevFt: 23,
     });
 
-    // Reset animation
-    currentFrame = 0;
-    simulationTime = 0;
+    // Create new ball object
+    const activeMesh = ballTemplate.clone();
+    activeMesh.visible = true;
+    scene.add(activeMesh);
+
+    const b = {
+        mesh: activeMesh,
+        trailLine: createTrailLine(),
+        trailPoints: [],
+        trajectoryData,
+        currentFrame: 0,
+        simulationTime: 0,
+        finished: false
+    };
+
+    activeBalls.push(b);
+
     isAnimating = true;
-
-    // Handle trail on relaunch
-    if (document.getElementById('ctrl-trail-permanent').checked) {
-        // Freeze the current trail as a separate Line so no teleport line appears
-        if (trailPoints.length >= 2) {
-            const positions = new Float32Array(trailPoints.length * 3);
-            trailPoints.forEach((p, i) => {
-                positions[i * 3] = p.pos.x;
-                positions[i * 3 + 1] = p.pos.y;
-                positions[i * 3 + 2] = p.pos.z;
-            });
-            const frozenGeo = new THREE.BufferGeometry();
-            frozenGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-            const frozenMat = new THREE.LineBasicMaterial({
-                color: 0x00ffff, linewidth: 8, transparent: true, opacity: 0.7,
-            });
-            const frozenLine = new THREE.Line(frozenGeo, frozenMat);
-            frozenLine.frustumCulled = false;
-            scene.add(frozenLine);
-            frozenTrails.push(frozenLine);
-        }
-    }
-    // Always clear current trail points for the new launch
-    trailPoints = [];
-    trailLine.geometry.dispose();
-    trailLine.geometry = new THREE.BufferGeometry();
-
-    ballMesh.visible = true;
 
     // Set initial position
     const p0 = trajectoryData[0];
     const pos3d = physToThree(p0.x, p0.y, p0.z);
-    ballMesh.position.copy(pos3d);
+    activeMesh.position.copy(pos3d);
 
     // Reset previous ball pos for follow cam
     previousBallPos = null;
@@ -348,24 +333,14 @@ let previousBallPos = null;
 
 function resetSimulation() {
     isAnimating = false;
-    trajectoryData = null;
-    currentFrame = 0;
-    simulationTime = 0;
-    ballMesh.visible = false;
 
-    if (!document.getElementById('ctrl-trail-permanent').checked) {
-        trailPoints = [];
-        // Clear current trail
-        trailLine.geometry.dispose();
-        trailLine.geometry = new THREE.BufferGeometry();
-        // Also remove all frozen trails
-        frozenTrails.forEach(ft => {
-            ft.geometry.dispose();
-            ft.material.dispose();
-            scene.remove(ft);
-        });
-        frozenTrails = [];
-    }
+    activeBalls.forEach(b => {
+        scene.remove(b.mesh);
+        scene.remove(b.trailLine);
+        b.trailLine.geometry.dispose();
+        b.trailLine.material.dispose();
+    });
+    activeBalls = [];
 
     // Reset HUD
     updateHUD({});
@@ -392,54 +367,61 @@ function animate() {
     }
 
     // Update ball animation perfectly matching physical real-time
-    if (isAnimating && trajectoryData) {
+    if (isAnimating && activeBalls.length > 0) {
         const trailDuration = parseFloat(document.getElementById('ctrl-trail-num').value);
+        let allFinished = true;
 
-        // Add delta time to our internal simulation tracker
-        simulationTime += delta;
+        for (let i = 0; i < activeBalls.length; i++) {
+            const b = activeBalls[i];
+            const isLatestBall = i === activeBalls.length - 1;
 
-        // Advance to the current physical frame
-        while (currentFrame < trajectoryData.length - 1 && trajectoryData[currentFrame + 1].t <= simulationTime) {
-            currentFrame++;
-        }
+            if (!b.finished) {
+                allFinished = false;
+                b.simulationTime += delta;
 
-        const point = trajectoryData[currentFrame];
-        const pos3d = physToThree(point.x, point.y, point.z);
+                while (b.currentFrame < b.trajectoryData.length - 1 && b.trajectoryData[b.currentFrame + 1].t <= b.simulationTime) {
+                    b.currentFrame++;
+                }
 
-        ballMesh.position.copy(pos3d);
+                const point = b.trajectoryData[b.currentFrame];
+                const pos3d = physToThree(point.x, point.y, point.z);
 
-        // If in follow camera mode, update camera to follow ball
-        if (currentCameraMode === 'follow') {
-            if (!previousBallPos) {
-                // Initial jump to follow position
-                previousBallPos = pos3d.clone();
-                const cameraOffset = new THREE.Vector3(0, 3, -15);
-                camera.position.copy(pos3d).add(cameraOffset);
-                controls.target.copy(pos3d);
+                b.mesh.position.copy(pos3d);
+
+                // Rotate ball visually dependent on real speed
+                b.mesh.rotation.x += delta * 15;
+                b.mesh.rotation.z += delta * 8;
+
+                updateTrail(b, pos3d, trailDuration, false);
+
+                if (isLatestBall) {
+                    updateHUD(point);
+                    if (currentCameraMode === 'follow') {
+                        if (!previousBallPos) {
+                            previousBallPos = pos3d.clone();
+                            const cameraOffset = new THREE.Vector3(0, 3, -15);
+                            camera.position.copy(pos3d).add(cameraOffset);
+                            controls.target.copy(pos3d);
+                        } else {
+                            const diff = pos3d.clone().sub(previousBallPos);
+                            camera.position.add(diff);
+                            controls.target.copy(pos3d);
+                            previousBallPos.copy(pos3d);
+                        }
+                    }
+                }
+
+                if (b.currentFrame >= b.trajectoryData.length - 1) {
+                    b.finished = true;
+                }
             } else {
-                // Move camera natively with the ball, preserving user rotation/zoom
-                const diff = pos3d.clone().sub(previousBallPos);
-                camera.position.add(diff);
-                controls.target.copy(pos3d);
-                previousBallPos.copy(pos3d);
+                // Keep updating trail decay for finished balls
+                updateTrail(b, null, trailDuration, true);
             }
         }
 
-        // Rotate ball visually dependent on real speed
-        ballMesh.rotation.x += delta * 15;
-        ballMesh.rotation.z += delta * 8;
-
-        // Update trail
-        updateTrail(pos3d, trailDuration);
-
-        // Update HUD
-        updateHUD(point);
-
-        // Night sky stays consistent (no dynamic color change)
-
-        // End simulation if we reached the last frame
-        if (currentFrame >= trajectoryData.length - 1) {
-            isAnimating = false;
+        if (allFinished) {
+            isAnimating = false; // All active balls have finished moving
         }
     }
 
