@@ -1,0 +1,97 @@
+SHEET: Elevations
+Dimensions: A1:C31
+Max row: 31, Max col: 3
+================================================================================
+  A1: name
+  B1: symbol
+  C1: elev-ft
+  A2: Angel Stadium of Anaheim
+  B2: ana
+  C2: 151
+  A3: Chase Field
+  B3: ari
+  C3: 1086
+  A4: SunTrust Park
+  B4: atl
+  C4: 1001
+  A5: Oriole Park at Camden Yards
+  B5: bal
+  C5: 33
+  A6: Fenway Park
+  B6: bos
+  C6: 21
+  A7: U.S. Cellular Field
+  B7: cha
+  C7: 595
+  A8: Wrigley Field
+  B8: chn
+  C8: 595
+  A9: Great American Ball Park
+  B9: cin
+  C9: 535
+  A10: Progressive Field
+  B10: cle
+  C10: 653
+  A11: Coors Field
+  B11: col
+  C11: 5190
+  A12: Comerica Park
+  B12: det
+  C12: 600
+  A13: Marlins Park
+  B13: flo
+  C13: 10
+  A14: Minute Maid Park
+  B14: hou
+  C14: 45
+  A15: Kauffman Stadium
+  B15: kca
+  C15: 865
+  A16: Dodger Stadium
+  B16: lan
+  C16: 515
+  A17: Miller Park
+  B17: mil
+  C17: 597
+  A18: Target Field
+  B18: min
+  C18: 815
+  A19: Yankee Stadium
+  B19: nya
+  C19: 55
+  A20: Citi Field
+  B20: nyn
+  C20: 10
+  A21: Oakland Coliseum
+  B21: oak
+  C21: 3
+  A22: Citizens Bank Park
+  B22: phi
+  C22: 20
+  A23: PNC Park
+  B23: pit
+  C23: 780
+  A24: Petco Park
+  B24: sdn
+  C24: 23
+  A25: Safeco Field
+  B25: sea
+  C25: 10
+  A26: AT&T Park
+  B26: sfn
+  C26: 0
+  A27: Busch Stadium
+  B27: sln
+  C27: 460
+  A28: Tropicana Field
+  B28: tba
+  C28: 15
+  A29: Globe Life Park in Arlington
+  B29: tex
+  C29: 545
+  A30: Rogers Centre
+  B30: tor
+  C30: 270
+  A31: Nationals Park
+  B31: was
+  C31: 35

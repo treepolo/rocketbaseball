@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3D 棒球軌跡模擬器 | Baseball Trajectory Simulator</title>
+  <meta name="description"
+    content="A high-fidelity 3D baseball flight trajectory simulator with realistic physics, Petco Park stadium." />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+
+<body>
+  <div id="app">
+    <!-- Loading Screen -->
+    <div id="loading-screen">
+      <div class="loading-content">
+        <div class="loading-logo">
+          <span class="logo-icon">⚾</span>
+          <h1>棒球軌跡<span class="accent">模擬器</span></h1>
+          <p class="loading-subtitle">1:1 真實物理 3D 模擬</p>
+        </div>
+        <div class="loading-bar-container">
+          <div class="loading-bar" id="loading-bar"></div>
+        </div>
+        <p class="loading-text" id="loading-text">引擎初始化中...</p>
+      </div>
+    </div>
+
+    <!-- 3D Canvas -->
+    <canvas id="main-canvas"></canvas>
+
+    <!-- Top HUD Bar -->
+    <div id="hud-top">
+      <div class="hud-logo">
+        <span class="logo-icon-small">⚾</span>
+        <span class="logo-text">棒球軌跡<span class="accent">模擬器</span></span>
+      </div>
+      <div class="hud-data-row">
+        <div class="data-chip" id="hud-speed">
+          <span class="data-label">球速</span>
+          <span class="data-value" id="hud-speed-val">--</span>
+          <span class="data-unit">mph</span>
+        </div>
+        <div class="data-chip" id="hud-spin">
+          <span class="data-label">轉速</span>
+          <span class="data-value" id="hud-spin-val">--</span>
+          <span class="data-unit">rpm</span>
+        </div>
+        <div class="data-chip" id="hud-distance">
+          <span class="data-label">飛行距離</span>
+          <span class="data-value" id="hud-distance-val">--</span>
+          <span class="data-unit">ft</span>
+        </div>
+        <div class="data-chip" id="hud-height">
+          <span class="data-label">高度</span>
+          <span class="data-value" id="hud-height-val">--</span>
+          <span class="data-unit">ft</span>
+        </div>
+        <div class="data-chip" id="hud-time">
+          <span class="data-label">時間</span>
+          <span class="data-value" id="hud-time-val">--</span>
+          <span class="data-unit">s</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Control Panel (Right Side) -->
+    <div id="control-panel">
+      <div class="panel-header">
+        <h2>⚙️ 控制面板</h2>
+        <button id="panel-toggle" class="panel-toggle-btn" title="切換面板">◀</button>
+      </div>
+      <div class="panel-body" id="panel-body">
+
+        <!-- Viewport Camera -->
+        <div class="control-section">
+          <h3>🎥 觀看視角</h3>
+          <div class="mode-selector camera-grid">
+            <button class="mode-btn active" id="cam-umpire">打者/裁判視角</button>
+            <button class="mode-btn" id="cam-pitcher">投手視角</button>
+            <button class="mode-btn" id="cam-broadcast">轉播視角</button>
+            <button class="mode-btn" id="cam-free">自由視角</button>
+            <button class="mode-btn" id="cam-follow">追球視角</button>
+          </div>
+        </div>
+
+        <!-- Simulator Mode -->
+        <div class="control-section">
+          <h3>🌐 系統模式</h3>
+          <div class="mode-selector">
+            <button class="mode-btn active" id="mode-normal">正經球路模擬</button>
+            <button class="mode-btn" id="mode-space">我要上太空！</button>
+          </div>
+        </div>
+
+        <!-- Launch Mode -->
+        <div class="control-section">
+          <h3>🏟️ 發射模式</h3>
+          <div class="mode-selector">
+            <button class="mode-btn active" data-mode="pitcher" id="mode-pitcher">投手 (Pitch)</button>
+            <button class="mode-btn" data-mode="batter" id="mode-batter">打者 (Hit)</button>
+          </div>
+        </div>
+
+        <!-- Pitch Parameters -->
+        <div class="control-section" id="pitch-params">
+          <h3>🎯 物理參數設定</h3>
+          <div class="control-group">
+            <label id="lbl-speed" for="ctrl-speed">出手速度 (mph)</label>
+            <div class="slider-row">
+              <input type="range" id="ctrl-speed" min="30" max="105" value="95" step="0.5">
+              <input type="number" id="ctrl-speed-num" value="95" step="0.5" class="num-input">
+            </div>
+          </div>
+          <div class="control-group">
+            <label for="ctrl-spinrate">總轉速 (rpm)</label>
+            <div class="slider-row">
+              <input type="range" id="ctrl-spinrate" min="0" max="4000" value="2300" step="10">
+              <input type="number" id="ctrl-spinrate-num" value="2300" step="10" class="num-input">
+            </div>
+          </div>
+          <div class="control-group">
+            <label for="ctrl-spindirection">旋轉方向 (時鐘)</label>
+            <div class="slider-row" style="display: flex; align-items: center; gap: 4px;">
+              <input type="number" id="ctrl-spin-hour" value="12" min="1" max="12" step="1" class="num-input"
+                style="width: 45px;">
+              <span>:</span>
+              <input type="number" id="ctrl-spin-min" value="0" min="0" max="59" step="1" class="num-input"
+                style="width: 45px;">
+              <input type="range" id="ctrl-spindirection" min="0" max="719" value="0" step="1" style="flex: 1;">
+            </div>
+            <small style="color:var(--text-muted); font-size:9px; display:block; margin-top:4px;">12:00 = 純下旋, 06:00 =
+              純上旋, 03:00 = 右偏旋</small>
+          </div>
+          <div class="control-group" style="display: none;">
+            <label for="ctrl-backspin">下旋 Backspin (rpm) <br><small>(+下旋/-上旋 或由旋轉方向決定)</small></label>
+            <div class="slider-row">
+              <input type="range" id="ctrl-backspin" min="-500000" max="500000" value="2300" step="10">
+              <input type="number" id="ctrl-backspin-num" value="2300" step="10" class="num-input">
+            </div>
+          </div>
+          <div class="control-group" style="display: none;">
+            <label for="ctrl-sidespin">側旋 Sidespin (rpm) <br><small>(+右/-左 或由旋轉方向決定)</small></label>
+            <div class="slider-row">
+              <input type="range" id="ctrl-sidespin" min="-500000" max="500000" value="0" step="10">
+              <input type="number" id="ctrl-sidespin-num" value="0" step="10" class="num-input">
+            </div>
+          </div>
+          <div class="control-group">
+            <label for="ctrl-gyroangle">陀螺角度 Gyro Angle (°)</label>
+            <div class="slider-row">
+              <input type="range" id="ctrl-gyroangle" min="-90" max="90" value="0" step="1">
+              <input type="number" id="ctrl-gyroangle-num" value="0" step="1" class="num-input">
+            </div>
+            <small style="color:var(--text-muted); font-size:9px; display:block; margin-top:4px;">0度=平行旋轉面(無陀螺轉),
+              90度=子彈旋轉(如美式足球)</small>
+          </div>
+          <div class="control-group">
+            <label id="lbl-angle" for="ctrl-angle">出手仰角 (°)</label>
+            <div class="slider-row">
+              <input type="range" id="ctrl-angle" min="-45" max="90" value="-1.5" step="0.1">
+              <input type="number" id="ctrl-angle-num" value="-1.5" step="0.1" class="num-input">
+            </div>
+          </div>
+          <div class="control-group">
+            <label id="lbl-direction" for="ctrl-direction">出手方向 (°)</label>
+            <div class="slider-row">
+              <input type="range" id="ctrl-direction" min="-45" max="45" value="0" step="0.1">
+              <input type="number" id="ctrl-direction-num" value="0" step="0.1" class="num-input">
+            </div>
+          </div>
+        </div>
+
+        <!-- Launch Position (Pitcher) -->
+        <div class="control-section" id="position-pitcher">
+          <h3>📍 出手位置設定</h3>
+          <div class="control-group">
+            <label for="ctrl-px">距離投手板前方延伸 (ft)</label>
+            <div class="slider-row">
+              <input type="range" id="ctrl-px" min="0" max="7.5" value="5.5" step="0.1">
+              <input type="number" id="ctrl-px-num" value="5.5" step="0.1" class="num-input">
+            </div>
+          </div>
+          <div class="control-group">
+            <label for="ctrl-pz">出手高度 (ft)</label>
+            <div class="slider-row">
+              <input type="range" id="ctrl-pz" min="0" max="7" value="6" step="0.1">
+              <input type="number" id="ctrl-pz-num" value="6" step="0.1" class="num-input">
+            </div>
+          </div>
+          <div class="control-group">
+            <label for="ctrl-plr">左右偏移 (+右/-左) (ft)</label>
+            <div class="slider-row">
+              <input type="range" id="ctrl-plr" min="-6.56" max="6.56" value="0" step="0.1">
+              <input type="number" id="ctrl-plr-num" value="0" step="0.1" class="num-input">
+            </div>
+          </div>
+        </div>
+
+        <!-- Additional Options -->
+        <div class="control-section">
+          <h3>✨ 進階設定</h3>
+          <div class="control-group">
+            <label for="ctrl-sim-time">模擬上限時間 (秒)</label>
+            <div class="slider-row">
+              <input type="range" id="ctrl-sim-time" min="1" max="12" value="10" step="1">
+              <input type="number" id="ctrl-sim-time-num" value="10" step="1" class="num-input">
+            </div>
+          </div>
+          <div class="control-group">
+            <label for="ctrl-fov">相機視角廣度 (FOV)</label>
+            <div class="slider-row">
+              <input type="range" id="ctrl-fov" min="10" max="180" value="50" step="1">
+              <input type="number" id="ctrl-fov-num" value="50" step="1" class="num-input">
+            </div>
+          </div>
+          <div class="control-group">
+            <label for="ctrl-trail">軌跡保留時間 (s)</label>
+            <div class="slider-row">
+              <input type="range" id="ctrl-trail" min="0.1" max="30" value="10" step="0.1">
+              <input type="number" id="ctrl-trail-num" value="10" step="0.1" class="num-input">
+            </div>
+            <div style="margin-top: 8px; display: flex; align-items: center; gap: 6px;">
+              <input type="checkbox" id="ctrl-trail-permanent" style="width: auto;">
+              <label for="ctrl-trail-permanent" style="margin-bottom: 0;">永久保留 (疊加軌跡)</label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="control-section action-section">
+          <button class="action-btn primary" id="btn-launch">
+            <span class="btn-icon">🚀</span> 發射模擬
+          </button>
+          <button class="action-btn secondary" id="btn-reset">
+            <span class="btn-icon">🔄</span> 重置
+          </button>
+        </div>
+
+        <!-- Presets -->
+        <div class="control-section">
+          <h3>📋 預設球種</h3>
+          <div class="preset-grid">
+            <button class="preset-btn" data-preset="fastball">四縫線速球</button>
+            <button class="preset-btn" data-preset="curveball">曲球</button>
+            <button class="preset-btn" data-preset="slider">滑球</button>
+            <button class="preset-btn" data-preset="changeup">變速球</button>
+            <button class="preset-btn" data-preset="cutter">卡特球</button>
+            <button class="preset-btn" data-preset="sinker">伸卡球</button>
+            <button class="preset-btn" data-preset="splitter">指叉球</button>
+            <button class="preset-btn" data-preset="knuckleball">蝴蝶球</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Info Bar -->
+    <div id="info-bar">
+      <span>攝影機操作: 左鍵拖曳可旋轉 | 滾輪縮放 | 右鍵平移 (自由視角模式) (空白鍵: 發射 | R鍵: 重置)</span>
+      <span id="fps-counter">FPS: --</span>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+
+</html>
