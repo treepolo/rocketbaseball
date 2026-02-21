@@ -45,10 +45,9 @@ function physToThree(px, py, pz) {
 async function init() {
     updateLoadingBar(10, '創建場景中...');
 
-    // Scene - black background for space (stars visible)
+    // Scene - night sky (consistent before/after launch)
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x000005);
-    // No fog - atmosphere is a real sphere in stadium.js
+    scene.background = new THREE.Color(0x050510);
 
     updateLoadingBar(20, '設定攝影機...');
 
@@ -136,34 +135,10 @@ async function init() {
 }
 
 // ============================================
-// LIGHTING SETUP (Bright Day Game)
+// LIGHTING — handled by stadium.js buildNightLighting()
 // ============================================
-function setupLighting() {
-    // Ambient light (bright default)
-    const ambient = new THREE.AmbientLight(0xffffff, 2.0);
-    scene.add(ambient);
+function setupLighting() { }
 
-    // Hemisphere light (blue sky + green/brown ground)
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x445544, 1.5);
-    scene.add(hemi);
-
-    // Direct Sunlight
-    const sun = new THREE.DirectionalLight(0xfff5e6, 3.5);
-    sun.position.set(-150, 250, -50);
-    sun.castShadow = true;
-
-    // Configure high-quality shadows covering the stadium
-    sun.shadow.camera.top = 250;
-    sun.shadow.camera.bottom = -250;
-    sun.shadow.camera.left = -250;
-    sun.shadow.camera.right = 250;
-    sun.shadow.camera.near = 0.1;
-    sun.shadow.camera.far = 1000;
-    sun.shadow.mapSize.width = 1024; // Reduced for performance
-    sun.shadow.mapSize.height = 1024; // Reduced for performance
-    sun.shadow.bias = -0.0005;
-    scene.add(sun);
-}
 
 // ============================================
 // BASEBALL MESH
@@ -460,14 +435,7 @@ function animate() {
         // Update HUD
         updateHUD(point);
 
-        // Background: dynamically blend sky blue (near surface) to space black (high altitude)
-        const altitude = camera.position.y;
-        const skyTransitionStart = 5000;   // start fading at 5000 ft
-        const skyTransitionEnd = 200000;   // full space at 200,000 ft
-        let spaceFactor = Math.max(0, altitude - skyTransitionStart) / (skyTransitionEnd - skyTransitionStart);
-        spaceFactor = Math.min(1, spaceFactor);
-        const skyColor = new THREE.Color(0x87ceeb);
-        scene.background = skyColor.lerp(new THREE.Color(0x000005), spaceFactor);
+        // Night sky stays consistent (no dynamic color change)
 
         // End simulation if we reached the last frame
         if (currentFrame >= trajectoryData.length - 1) {

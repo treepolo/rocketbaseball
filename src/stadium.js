@@ -1,920 +1,22 @@
 /**
- * Stadium Builder - Petco Park (San Diego Padres)
- * 1:1 scale baseball field on a real ellipsoid Earth
- * All dimensions in feet, converted to Three.js units (1 unit = 1 foot)
+ * Stadium + Procedural World Builder
+ * Night game on a 1:1 ellipsoid Earth with seeded terrain generation
  */
 import * as THREE from 'three';
 
-// ============================================
-// FIELD DIMENSIONS (Standard MLB / Petco Park)
-// ============================================
 const FIELD = {
-    pitcherMoundDist: 60.5,
-    baseDist: 90,
-    infieldDirtRadius: 95,
-    moundRadius: 9,
-    moundHeight: 0.833,
-    homePlateToBackstop: 60,
-    fenceDistLF: 336,
-    fenceDistLCF: 375,
-    fenceDistCF: 396,
-    fenceDistRCF: 391,
-    fenceDistRF: 322,
-    fenceHeight: 8,
-    wallHeightLF: 11.5,
-    warningTrackWidth: 15,
-    foulLineLength: 340,
-    fieldRadius: 450,
+    pitcherMoundDist: 60.5, baseDist: 90, infieldDirtRadius: 95,
+    moundRadius: 9, moundHeight: 0.833, homePlateToBackstop: 60,
+    fenceDistLF: 336, fenceDistLCF: 375, fenceDistCF: 396,
+    fenceDistRCF: 391, fenceDistRF: 322, fenceHeight: 8, wallHeightLF: 11.5,
+    warningTrackWidth: 15, foulLineLength: 340, fieldRadius: 450,
 };
 
-// Earth dimensions in feet (WGS84 ellipsoid)
-const EARTH_EQUATORIAL_RADIUS_FT = 20925721; // ~6378.137 km in feet
-const EARTH_POLAR_RADIUS_FT = 20855567;      // ~6356.752 km in feet
-const ATMOSPHERE_THICKNESS_FT = 328084;       // ~100 km in feet (Karman line)
-
-// ============================================
-// MATERIALS
-// ============================================
-function createMaterials() {
-    return {
-        grass: new THREE.MeshStandardMaterial({ color: 0x4caf50, roughness: 0.85, metalness: 0.0 }),
-        grassDark: new THREE.MeshStandardMaterial({ color: 0x388e3c, roughness: 0.85, metalness: 0.0 }),
-        dirt: new THREE.MeshStandardMaterial({ color: 0xcd853f, roughness: 0.9, metalness: 0.0 }),
-        dirtMound: new THREE.MeshStandardMaterial({ color: 0xc48039, roughness: 0.85, metalness: 0.0 }),
-        warningTrack: new THREE.MeshStandardMaterial({ color: 0xa86a2f, roughness: 0.9, metalness: 0.0 }),
-        chalk: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7, metalness: 0.0 }),
-        fence: new THREE.MeshStandardMaterial({ color: 0x1a4522, roughness: 0.4, metalness: 0.1 }),
-        concrete: new THREE.MeshStandardMaterial({ color: 0x888899, roughness: 0.8, metalness: 0.1 }),
-        concreteDark: new THREE.MeshStandardMaterial({ color: 0x666677, roughness: 0.8, metalness: 0.1 }),
-        seats: new THREE.MeshStandardMaterial({ color: 0x1e3a8a, roughness: 0.6, metalness: 0.1 }),
-        seatsGold: new THREE.MeshStandardMaterial({ color: 0xdaaa00, roughness: 0.5, metalness: 0.2 }),
-        seatsRed: new THREE.MeshStandardMaterial({ color: 0xb91c1c, roughness: 0.6, metalness: 0.1 }),
-        rubber: new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.5, metalness: 0.1 }),
-        base: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5, metalness: 0.0 }),
-        scoreboard: new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.3, metalness: 0.8 }),
-        glass: new THREE.MeshStandardMaterial({ color: 0xaaddff, roughness: 0.1, metalness: 0.9, transparent: true, opacity: 0.5 }),
-        metal: new THREE.MeshStandardMaterial({ color: 0x9999aa, roughness: 0.3, metalness: 0.9 }),
-        building: new THREE.MeshStandardMaterial({ color: 0x777788, roughness: 0.5, metalness: 0.1 }),
-        buildingLight: new THREE.MeshStandardMaterial({ color: 0x888899, roughness: 0.5, metalness: 0.1 }),
-        window: new THREE.MeshStandardMaterial({ color: 0x2244aa, roughness: 0.1, metalness: 0.8 }),
-        lightPole: new THREE.MeshStandardMaterial({ color: 0x888899, roughness: 0.3, metalness: 0.8 }),
-        ground: new THREE.MeshStandardMaterial({ color: 0x4caf50, roughness: 0.9, metalness: 0.05 }),
-    };
-}
-
-// ============================================
-// BUILD THE STADIUM
-// ============================================
-export function buildStadium(scene) {
-    const mats = createMaterials();
-    const stadiumGroup = new THREE.Group();
-    stadiumGroup.name = 'stadium';
-
-    // 1. Ellipsoid Earth (replaces flat ground)
-    buildEarth(stadiumGroup, mats);
-
-    // 2. Real atmosphere shell
-    buildAtmosphere(stadiumGroup);
-
-    // 3. Space environment (stars, planets, milky way)
-    buildSpaceEnvironment(scene);
-
-    // 4. Local ground patch around stadium (flat for gameplay, sits on Earth surface)
-    const localGroundGeo = new THREE.CircleGeometry(3000, 64);
-    const localGround = new THREE.Mesh(localGroundGeo, mats.ground);
-    localGround.rotation.x = -Math.PI / 2;
-    localGround.position.y = -0.5;
-    localGround.receiveShadow = true;
-    stadiumGroup.add(localGround);
-
-    // 5. Outfield grass
-    const outfieldGeo = new THREE.CircleGeometry(FIELD.fieldRadius, 64, -Math.PI / 4, Math.PI / 2);
-    const outfield = new THREE.Mesh(outfieldGeo, mats.grass);
-    outfield.rotation.x = -Math.PI / 2;
-    outfield.position.y = 0.01;
-    outfield.receiveShadow = true;
-    stadiumGroup.add(outfield);
-
-    // 6-15. Field features
-    buildMowingPattern(stadiumGroup, mats);
-
-    const infieldGeo = new THREE.CircleGeometry(FIELD.infieldDirtRadius, 64);
-    const infieldDirt = new THREE.Mesh(infieldGeo, mats.dirt);
-    infieldDirt.rotation.x = -Math.PI / 2;
-    infieldDirt.position.set(0, 0.02, FIELD.pitcherMoundDist);
-    infieldDirt.receiveShadow = true;
-    stadiumGroup.add(infieldDirt);
-
-    const innerGrassGeo = new THREE.CircleGeometry(70, 64);
-    const innerGrass = new THREE.Mesh(innerGrassGeo, mats.grass);
-    innerGrass.rotation.x = -Math.PI / 2;
-    innerGrass.position.set(0, 0.03, FIELD.pitcherMoundDist);
-    innerGrass.receiveShadow = true;
-    stadiumGroup.add(innerGrass);
-
-    buildBasePaths(stadiumGroup, mats);
-    buildPitcherMound(stadiumGroup, mats);
-    buildBases(stadiumGroup, mats);
-    buildFoulLines(stadiumGroup, mats);
-    buildHomePlateArea(stadiumGroup, mats);
-    buildWarningTrack(stadiumGroup, mats);
-    buildOutfieldFence(stadiumGroup, mats);
-    buildSpectatorStands(stadiumGroup, mats);
-    buildScoreboard(stadiumGroup, mats);
-    buildLightTowers(stadiumGroup, scene, mats);
-    buildCitySkyline(stadiumGroup, mats);
-
-    scene.add(stadiumGroup);
-    return stadiumGroup;
-}
-
-// ============================================
-// EARTH (1:1 ellipsoid)
-// ============================================
-function buildEarth(group, mats) {
-    // Create ellipsoid by scaling a sphere
-    const segments = 96;
-    const earthGeo = new THREE.SphereGeometry(EARTH_EQUATORIAL_RADIUS_FT, segments, segments);
-
-    // Apply ellipsoid scaling (polar radius / equatorial radius)
-    const polarScale = EARTH_POLAR_RADIUS_FT / EARTH_EQUATORIAL_RADIUS_FT;
-
-    // Earth surface material - blue/green planet look
-    const earthMat = new THREE.MeshStandardMaterial({
-        color: 0x2255aa,
-        roughness: 0.8,
-        metalness: 0.1,
-    });
-
-    const earthMesh = new THREE.Mesh(earthGeo, earthMat);
-    // Scale Y (up axis in Three.js) for polar flattening
-    earthMesh.scale.set(1, polarScale, 1);
-    // Position so the surface is at y=0 at the stadium location
-    earthMesh.position.y = -EARTH_EQUATORIAL_RADIUS_FT;
-    earthMesh.receiveShadow = true;
-    earthMesh.name = 'earth';
-    group.add(earthMesh);
-
-    // Add green land patches on top hemisphere for visual interest
-    const landGeo = new THREE.SphereGeometry(EARTH_EQUATORIAL_RADIUS_FT + 50, segments, segments,
-        0, Math.PI * 0.5, 0, Math.PI * 0.4);
-    const landMat = new THREE.MeshStandardMaterial({
-        color: 0x3a7d44,
-        roughness: 0.85,
-        metalness: 0.05,
-    });
-    const land = new THREE.Mesh(landGeo, landMat);
-    land.scale.set(1, polarScale, 1);
-    land.position.y = -EARTH_EQUATORIAL_RADIUS_FT;
-    land.receiveShadow = true;
-    group.add(land);
-}
-
-// ============================================
-// ATMOSPHERE (real observable spherical shell)
-// ============================================
-function buildAtmosphere(group) {
-    const atmosphereRadius = EARTH_EQUATORIAL_RADIUS_FT + ATMOSPHERE_THICKNESS_FT;
-    const polarScale = EARTH_POLAR_RADIUS_FT / EARTH_EQUATORIAL_RADIUS_FT;
-
-    // Outer atmosphere shell - very subtle, observable from outside
-    // Using a large transparent sphere with additive blending
-    const atmoGeo = new THREE.SphereGeometry(atmosphereRadius, 64, 64);
-    const atmoMat = new THREE.ShaderMaterial({
-        uniforms: {
-            earthRadius: { value: EARTH_EQUATORIAL_RADIUS_FT },
-            atmosphereRadius: { value: atmosphereRadius },
-            sunDirection: { value: new THREE.Vector3(-0.5, 0.7, -0.2).normalize() },
-        },
-        vertexShader: `
-            varying vec3 vWorldPosition;
-            varying vec3 vNormal;
-            void main() {
-                vNormal = normalize(normalMatrix * normal);
-                vec4 worldPos = modelMatrix * vec4(position, 1.0);
-                vWorldPosition = worldPos.xyz;
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-            }
-        `,
-        fragmentShader: `
-            uniform vec3 sunDirection;
-            varying vec3 vWorldPosition;
-            varying vec3 vNormal;
-            void main() {
-                // Rim-based atmospheric glow
-                float intensity = pow(1.0 - abs(dot(vNormal, vec3(0.0, 0.0, 1.0))), 2.0);
-                // Fresnel-like effect based on view angle
-                float rim = 1.0 - max(0.0, dot(vNormal, normalize(cameraPosition - vWorldPosition)));
-                rim = pow(rim, 3.0);
-                
-                // Atmospheric scattering color (blue at edges)
-                vec3 atmoColor = mix(vec3(0.4, 0.7, 1.0), vec3(0.2, 0.5, 1.0), rim);
-                
-                // Sun glow
-                float sunDot = max(0.0, dot(vNormal, sunDirection));
-                atmoColor += vec3(1.0, 0.8, 0.5) * sunDot * 0.3;
-                
-                float alpha = rim * 0.35;
-                gl_FragColor = vec4(atmoColor, alpha);
-            }
-        `,
-        transparent: true,
-        side: THREE.BackSide,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-    });
-
-    const atmosphere = new THREE.Mesh(atmoGeo, atmoMat);
-    atmosphere.scale.set(1, polarScale, 1);
-    atmosphere.position.y = -EARTH_EQUATORIAL_RADIUS_FT;
-    atmosphere.name = 'atmosphere';
-    group.add(atmosphere);
-
-    // Inner atmosphere glow (visible from surface, very subtle haze at horizon)
-    const innerAtmoGeo = new THREE.SphereGeometry(EARTH_EQUATORIAL_RADIUS_FT + 100000, 48, 48);
-    const innerAtmoMat = new THREE.ShaderMaterial({
-        uniforms: {},
-        vertexShader: `
-            varying vec3 vNormal;
-            varying vec3 vViewDir;
-            void main() {
-                vNormal = normalize(normalMatrix * normal);
-                vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
-                vViewDir = normalize(-mvPos.xyz);
-                gl_Position = projectionMatrix * mvPos;
-            }
-        `,
-        fragmentShader: `
-            varying vec3 vNormal;
-            varying vec3 vViewDir;
-            void main() {
-                float rim = 1.0 - max(0.0, dot(vNormal, vViewDir));
-                rim = pow(rim, 5.0);
-                vec3 col = vec3(0.5, 0.7, 1.0);
-                gl_FragColor = vec4(col, rim * 0.15);
-            }
-        `,
-        transparent: true,
-        side: THREE.BackSide,
-        depthWrite: false,
-    });
-    const innerAtmo = new THREE.Mesh(innerAtmoGeo, innerAtmoMat);
-    innerAtmo.scale.set(1, polarScale, 1);
-    innerAtmo.position.y = -EARTH_EQUATORIAL_RADIUS_FT;
-    group.add(innerAtmo);
-}
-
-// ============================================
-// SPACE ENVIRONMENT
-// ============================================
-function buildSpaceEnvironment(scene) {
-    // 1. Stars (thousands of points)
-    buildStarfield(scene);
-
-    // 2. Milky Way band
-    buildMilkyWay(scene);
-
-    // 3. Solar system neighbors
-    buildSolarSystem(scene);
-}
-
-function buildStarfield(scene) {
-    const starCount = 15000;
-    const positions = new Float32Array(starCount * 3);
-    const colors = new Float32Array(starCount * 3);
-    const sizes = new Float32Array(starCount);
-    const rng = mulberry32(12345);
-
-    const skyRadius = 5e9; // 5 billion ft away
-
-    for (let i = 0; i < starCount; i++) {
-        // Random direction on sphere
-        const theta = Math.acos(2 * rng() - 1);
-        const phi = rng() * Math.PI * 2;
-        const r = skyRadius * (0.8 + rng() * 0.4);
-
-        positions[i * 3] = r * Math.sin(theta) * Math.cos(phi);
-        positions[i * 3 + 1] = r * Math.sin(theta) * Math.sin(phi);
-        positions[i * 3 + 2] = r * Math.cos(theta);
-
-        // Star color variation (white, blue-white, yellow, orange-red)
-        const colorType = rng();
-        if (colorType < 0.5) {
-            colors[i * 3] = 1.0; colors[i * 3 + 1] = 1.0; colors[i * 3 + 2] = 1.0;
-        } else if (colorType < 0.7) {
-            colors[i * 3] = 0.7; colors[i * 3 + 1] = 0.8; colors[i * 3 + 2] = 1.0;
-        } else if (colorType < 0.85) {
-            colors[i * 3] = 1.0; colors[i * 3 + 1] = 0.95; colors[i * 3 + 2] = 0.7;
-        } else {
-            colors[i * 3] = 1.0; colors[i * 3 + 1] = 0.6; colors[i * 3 + 2] = 0.3;
-        }
-
-        // Size variation
-        const mag = rng();
-        sizes[i] = mag < 0.8 ? 800000 + rng() * 1500000 : 2000000 + rng() * 5000000;
-    }
-
-    const starGeo = new THREE.BufferGeometry();
-    starGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    starGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    starGeo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
-
-    const starMat = new THREE.PointsMaterial({
-        size: 2000000,
-        vertexColors: true,
-        transparent: true,
-        opacity: 0.9,
-        sizeAttenuation: true,
-        depthWrite: false,
-    });
-
-    const stars = new THREE.Points(starGeo, starMat);
-    stars.name = 'starfield';
-    scene.add(stars);
-}
-
-function buildMilkyWay(scene) {
-    // Milky Way as a band of denser, dimmer stars
-    const mwCount = 8000;
-    const positions = new Float32Array(mwCount * 3);
-    const colors = new Float32Array(mwCount * 3);
-    const rng = mulberry32(77777);
-    const skyRadius = 4.5e9;
-
-    for (let i = 0; i < mwCount; i++) {
-        // Concentrate along a band (galactic plane tilted ~60° from ecliptic)
-        const bandAngle = (rng() - 0.5) * 0.3; // narrow band
-        const longAngle = rng() * Math.PI * 2;
-
-        const x = skyRadius * Math.cos(longAngle) * Math.cos(bandAngle);
-        const y = skyRadius * Math.sin(bandAngle);
-        const z = skyRadius * Math.sin(longAngle) * Math.cos(bandAngle);
-
-        // Tilt the band ~60 degrees
-        const tiltAngle = Math.PI / 3;
-        const rotY = y * Math.cos(tiltAngle) - z * Math.sin(tiltAngle);
-        const rotZ = y * Math.sin(tiltAngle) + z * Math.cos(tiltAngle);
-
-        positions[i * 3] = x;
-        positions[i * 3 + 1] = rotY;
-        positions[i * 3 + 2] = rotZ;
-
-        // Milky way stars are dimmer, more white/blue
-        const brightness = 0.4 + rng() * 0.4;
-        colors[i * 3] = brightness;
-        colors[i * 3 + 1] = brightness * (0.9 + rng() * 0.1);
-        colors[i * 3 + 2] = brightness * (0.95 + rng() * 0.05);
-    }
-
-    const mwGeo = new THREE.BufferGeometry();
-    mwGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    mwGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-
-    const mwMat = new THREE.PointsMaterial({
-        size: 1200000,
-        vertexColors: true,
-        transparent: true,
-        opacity: 0.6,
-        sizeAttenuation: true,
-        depthWrite: false,
-    });
-
-    const milkyWay = new THREE.Points(mwGeo, mwMat);
-    milkyWay.name = 'milkyWay';
-    scene.add(milkyWay);
-}
-
-function buildSolarSystem(scene) {
-    // Sun (as a bright glowing sphere)
-    const sunDist = 4.836e11; // ~93 million miles in feet
-    const sunRadius = 2.28e9; // ~696,000 km in feet
-    const sunGeo = new THREE.SphereGeometry(sunRadius, 32, 32);
-    const sunMat = new THREE.MeshBasicMaterial({
-        color: 0xffffcc,
-        emissive: 0xffff00,
-    });
-    // For visual scale, place sun at a reduced but still huge distance
-    const sunVisualDist = 2e10;
-    const sunVisualRadius = sunRadius * 0.5;
-    const sunGeoVis = new THREE.SphereGeometry(sunVisualRadius, 32, 32);
-    const sun = new THREE.Mesh(sunGeoVis, new THREE.MeshBasicMaterial({ color: 0xffffdd }));
-    sun.position.set(sunVisualDist, sunVisualDist * 0.3, -sunVisualDist * 0.5);
-    sun.name = 'sun_body';
-    scene.add(sun);
-
-    // Sun glow
-    const sunGlowGeo = new THREE.SphereGeometry(sunVisualRadius * 3, 16, 16);
-    const sunGlowMat = new THREE.MeshBasicMaterial({
-        color: 0xffeeaa,
-        transparent: true,
-        opacity: 0.15,
-        side: THREE.BackSide,
-    });
-    const sunGlow = new THREE.Mesh(sunGlowGeo, sunGlowMat);
-    sunGlow.position.copy(sun.position);
-    scene.add(sunGlow);
-
-    // Moon
-    const moonDist = 1.261e9; // ~384,400 km in feet
-    const moonRadius = 5.702e6; // ~1,737 km in feet
-    const moonGeo = new THREE.SphereGeometry(moonRadius * 0.8, 24, 24);
-    const moonMat = new THREE.MeshStandardMaterial({ color: 0xcccccc, roughness: 0.9, metalness: 0.0 });
-    const moon = new THREE.Mesh(moonGeo, moonMat);
-    moon.position.set(moonDist * 0.7, moonDist * 0.5, moonDist * 0.3);
-    moon.name = 'moon';
-    scene.add(moon);
-
-    // Mars (visible as a small reddish dot)
-    const marsVisualDist = 8e10;
-    const marsVisualRadius = 3e8;
-    const marsGeo = new THREE.SphereGeometry(marsVisualRadius, 16, 16);
-    const mars = new THREE.Mesh(marsGeo, new THREE.MeshBasicMaterial({ color: 0xcc5533 }));
-    mars.position.set(-marsVisualDist * 0.8, marsVisualDist * 0.2, marsVisualDist * 0.6);
-    mars.name = 'mars';
-    scene.add(mars);
-
-    // Jupiter (larger, visible)
-    const jupiterVisualDist = 1.5e11;
-    const jupiterVisualRadius = 1.5e9;
-    const jupiterGeo = new THREE.SphereGeometry(jupiterVisualRadius, 20, 20);
-    const jupiter = new THREE.Mesh(jupiterGeo, new THREE.MeshBasicMaterial({ color: 0xddbb88 }));
-    jupiter.position.set(jupiterVisualDist * 0.5, jupiterVisualDist * 0.1, -jupiterVisualDist * 0.8);
-    jupiter.name = 'jupiter';
-    scene.add(jupiter);
-
-    // Venus (bright, close)
-    const venusVisualDist = 3e10;
-    const venusVisualRadius = 2e8;
-    const venusGeo = new THREE.SphereGeometry(venusVisualRadius, 16, 16);
-    const venus = new THREE.Mesh(venusGeo, new THREE.MeshBasicMaterial({ color: 0xffffee }));
-    venus.position.set(venusVisualDist * 0.6, venusVisualDist * 0.4, venusVisualDist * 0.7);
-    venus.name = 'venus';
-    scene.add(venus);
-
-    // Saturn (with ring hint)
-    const saturnVisualDist = 2e11;
-    const saturnVisualRadius = 1.2e9;
-    const saturnGeo = new THREE.SphereGeometry(saturnVisualRadius, 20, 20);
-    const saturn = new THREE.Mesh(saturnGeo, new THREE.MeshBasicMaterial({ color: 0xeecc77 }));
-    saturn.position.set(-saturnVisualDist * 0.6, saturnVisualDist * 0.15, -saturnVisualDist * 0.7);
-    saturn.name = 'saturn';
-    scene.add(saturn);
-
-    // Saturn ring
-    const ringGeo = new THREE.RingGeometry(saturnVisualRadius * 1.5, saturnVisualRadius * 2.5, 32);
-    const ringMat = new THREE.MeshBasicMaterial({
-        color: 0xccbb88, side: THREE.DoubleSide, transparent: true, opacity: 0.5
-    });
-    const ring = new THREE.Mesh(ringGeo, ringMat);
-    ring.position.copy(saturn.position);
-    ring.rotation.x = Math.PI / 3;
-    scene.add(ring);
-}
-
-// ============================================
-// SUB-BUILDERS
-// ============================================
-
-function buildMowingPattern(group, mats) {
-    const stripWidth = 20;
-    for (let i = 0; i < 10; i++) {
-        const geo = new THREE.PlaneGeometry(stripWidth, FIELD.fieldRadius);
-        const mat = i % 2 === 0 ? mats.grass : mats.grassDark;
-        const strip = new THREE.Mesh(geo, mat);
-        strip.rotation.x = -Math.PI / 2;
-        strip.position.set((i - 4.5) * stripWidth, 0.015, FIELD.pitcherMoundDist + 100);
-        strip.receiveShadow = true;
-        group.add(strip);
-    }
-}
-
-function buildBasePaths(group, mats) {
-    const pathWidth = 6;
-    const baseDist = FIELD.baseDist;
-    const halfDiag = baseDist * Math.sqrt(2) / 2;
-
-    const path1Geo = new THREE.PlaneGeometry(pathWidth, baseDist);
-    const path1 = new THREE.Mesh(path1Geo, mats.dirt);
-    path1.rotation.x = -Math.PI / 2;
-    path1.rotation.z = -Math.PI / 4;
-    path1.position.set(halfDiag / 2, 0.025, halfDiag / 2);
-    path1.receiveShadow = true;
-    group.add(path1);
-
-    const path3 = new THREE.Mesh(path1Geo.clone(), mats.dirt);
-    path3.rotation.x = -Math.PI / 2;
-    path3.rotation.z = Math.PI / 4;
-    path3.position.set(-halfDiag / 2, 0.025, halfDiag / 2);
-    path3.receiveShadow = true;
-    group.add(path3);
-
-    const path12 = new THREE.Mesh(path1Geo.clone(), mats.dirt);
-    path12.rotation.x = -Math.PI / 2;
-    path12.rotation.z = Math.PI / 4;
-    path12.position.set(halfDiag / 2, 0.025, baseDist + halfDiag / 2 - baseDist / 2);
-    path12.receiveShadow = true;
-    group.add(path12);
-
-    const path32 = new THREE.Mesh(path1Geo.clone(), mats.dirt);
-    path32.rotation.x = -Math.PI / 2;
-    path32.rotation.z = -Math.PI / 4;
-    path32.position.set(-halfDiag / 2, 0.025, baseDist + halfDiag / 2 - baseDist / 2);
-    path32.receiveShadow = true;
-    group.add(path32);
-}
-
-function buildPitcherMound(group, mats) {
-    const moundGeo = new THREE.CylinderGeometry(
-        FIELD.moundRadius, FIELD.moundRadius + 2, FIELD.moundHeight, 32
-    );
-    const mound = new THREE.Mesh(moundGeo, mats.dirtMound);
-    mound.position.set(0, FIELD.moundHeight / 2, FIELD.pitcherMoundDist);
-    mound.castShadow = true;
-    mound.receiveShadow = true;
-    group.add(mound);
-
-    const rubberGeo = new THREE.BoxGeometry(2, 0.15, 0.5);
-    const rubber = new THREE.Mesh(rubberGeo, mats.rubber);
-    rubber.position.set(0, FIELD.moundHeight + 0.075, FIELD.pitcherMoundDist);
-    rubber.castShadow = true;
-    group.add(rubber);
-}
-
-function buildBases(group, mats) {
-    const baseDist = FIELD.baseDist;
-    const diagonal = baseDist * Math.sqrt(2) / 2;
-
-    const hpShape = new THREE.Shape();
-    const hpSize = 17 / 12 / 2;
-    hpShape.moveTo(0, hpSize);
-    hpShape.lineTo(hpSize, hpSize * 0.5);
-    hpShape.lineTo(hpSize, -hpSize * 0.5);
-    hpShape.lineTo(-hpSize, -hpSize * 0.5);
-    hpShape.lineTo(-hpSize, hpSize * 0.5);
-    hpShape.closePath();
-
-    const hpGeo = new THREE.ExtrudeGeometry(hpShape, { depth: 0.02, bevelEnabled: false });
-    const homePlate = new THREE.Mesh(hpGeo, mats.base);
-    homePlate.rotation.x = -Math.PI / 2;
-    homePlate.position.set(0, 0.05, 0);
-    homePlate.castShadow = true;
-    group.add(homePlate);
-
-    const baseSize = 15 / 12;
-    const baseGeo = new THREE.BoxGeometry(baseSize, 0.25, baseSize);
-
-    const first = new THREE.Mesh(baseGeo, mats.base);
-    first.position.set(diagonal, 0.125, diagonal);
-    first.rotation.y = Math.PI / 4;
-    first.castShadow = true;
-    group.add(first);
-
-    const second = new THREE.Mesh(baseGeo.clone(), mats.base);
-    second.position.set(0, 0.125, diagonal * 2);
-    second.rotation.y = Math.PI / 4;
-    second.castShadow = true;
-    group.add(second);
-
-    const third = new THREE.Mesh(baseGeo.clone(), mats.base);
-    third.position.set(-diagonal, 0.125, diagonal);
-    third.rotation.y = Math.PI / 4;
-    third.castShadow = true;
-    group.add(third);
-}
-
-function buildFoulLines(group, mats) {
-    const lineWidth = 0.33;
-    const lineLength = FIELD.foulLineLength;
-
-    const lineGeo = new THREE.PlaneGeometry(lineWidth, lineLength);
-    const rightLine = new THREE.Mesh(lineGeo, mats.chalk);
-    rightLine.rotation.x = -Math.PI / 2;
-    rightLine.rotation.z = -Math.PI / 4;
-    rightLine.position.set(
-        lineLength / 2 * Math.sin(Math.PI / 4), 0.04,
-        lineLength / 2 * Math.cos(Math.PI / 4)
-    );
-    group.add(rightLine);
-
-    const leftLine = new THREE.Mesh(lineGeo.clone(), mats.chalk);
-    leftLine.rotation.x = -Math.PI / 2;
-    leftLine.rotation.z = Math.PI / 4;
-    leftLine.position.set(
-        -lineLength / 2 * Math.sin(Math.PI / 4), 0.04,
-        lineLength / 2 * Math.cos(Math.PI / 4)
-    );
-    group.add(leftLine);
-}
-
-function buildHomePlateArea(group, mats) {
-    const hpDirtGeo = new THREE.CircleGeometry(13, 32);
-    const hpDirt = new THREE.Mesh(hpDirtGeo, mats.dirt);
-    hpDirt.rotation.x = -Math.PI / 2;
-    hpDirt.position.set(0, 0.02, 0);
-    hpDirt.receiveShadow = true;
-    group.add(hpDirt);
-
-    const boxWidth = 4;
-    const boxLength = 6;
-    const boxLineW = 0.17;
-
-    [-1, 1].forEach(side => {
-        const edges = [
-            { w: boxLineW, h: boxLength, x: side * (boxWidth / 2 + 1.5), z: 0 },
-            { w: boxLineW, h: boxLength, x: side * (boxWidth / 2 + 1.5 + boxWidth), z: 0 },
-            { w: boxWidth, h: boxLineW, x: side * (boxWidth / 2 + 1.5 + boxWidth / 2), z: boxLength / 2 },
-            { w: boxWidth, h: boxLineW, x: side * (boxWidth / 2 + 1.5 + boxWidth / 2), z: -boxLength / 2 },
-        ];
-        edges.forEach(e => {
-            const geo = new THREE.PlaneGeometry(e.w, e.h);
-            const line = new THREE.Mesh(geo, mats.chalk);
-            line.rotation.x = -Math.PI / 2;
-            line.position.set(e.x, 0.04, e.z);
-            group.add(line);
-        });
-    });
-}
-
-function buildWarningTrack(group, mats) {
-    const innerR = FIELD.fenceDistCF - FIELD.warningTrackWidth;
-    const outerR = FIELD.fenceDistCF;
-    const shape = new THREE.Shape();
-    const startAngle = -Math.PI / 4;
-    const endAngle = Math.PI / 4;
-    const segments = 48;
-
-    for (let i = 0; i <= segments; i++) {
-        const angle = startAngle + (endAngle - startAngle) * (i / segments);
-        const x = Math.sin(angle) * outerR;
-        const z = Math.cos(angle) * outerR;
-        if (i === 0) shape.moveTo(x, z);
-        else shape.lineTo(x, z);
-    }
-    for (let i = segments; i >= 0; i--) {
-        const angle = startAngle + (endAngle - startAngle) * (i / segments);
-        shape.lineTo(Math.sin(angle) * innerR, Math.cos(angle) * innerR);
-    }
-    shape.closePath();
-
-    const trackGeo = new THREE.ShapeGeometry(shape);
-    const track = new THREE.Mesh(trackGeo, mats.warningTrack);
-    track.rotation.x = -Math.PI / 2;
-    track.position.y = 0.018;
-    track.receiveShadow = true;
-    group.add(track);
-}
-
-function buildOutfieldFence(group, mats) {
-    const fencePoints = [
-        { angle: -Math.PI / 4, dist: FIELD.fenceDistRF, height: FIELD.fenceHeight },
-        { angle: -Math.PI / 8, dist: FIELD.fenceDistRCF, height: FIELD.fenceHeight },
-        { angle: 0, dist: FIELD.fenceDistCF, height: FIELD.fenceHeight },
-        { angle: Math.PI / 8, dist: FIELD.fenceDistLCF, height: FIELD.fenceHeight },
-        { angle: Math.PI / 4, dist: FIELD.fenceDistLF, height: FIELD.wallHeightLF },
-    ];
-
-    for (let i = 0; i < fencePoints.length - 1; i++) {
-        const p1 = fencePoints[i];
-        const p2 = fencePoints[i + 1];
-        const x1 = Math.sin(p1.angle) * p1.dist;
-        const z1 = Math.cos(p1.angle) * p1.dist;
-        const x2 = Math.sin(p2.angle) * p2.dist;
-        const z2 = Math.cos(p2.angle) * p2.dist;
-        const dx = x2 - x1;
-        const dz = z2 - z1;
-        const length = Math.sqrt(dx * dx + dz * dz);
-        const maxH = Math.max(p1.height, p2.height);
-
-        const fenceGeo = new THREE.BoxGeometry(length, maxH, 1);
-        const fence = new THREE.Mesh(fenceGeo, mats.fence);
-        fence.position.set((x1 + x2) / 2, maxH / 2, (z1 + z2) / 2);
-        fence.rotation.y = -Math.atan2(dz, dx);
-        fence.castShadow = true;
-        fence.receiveShadow = true;
-        group.add(fence);
-
-        const padGeo = new THREE.BoxGeometry(length, 0.5, 1.2);
-        const padMat = new THREE.MeshStandardMaterial({
-            color: 0xFFD700, roughness: 0.6, emissive: 0x554400, emissiveIntensity: 0.2,
-        });
-        const pad = new THREE.Mesh(padGeo, padMat);
-        pad.position.set((x1 + x2) / 2, maxH + 0.25, (z1 + z2) / 2);
-        pad.rotation.y = -Math.atan2(dz, dx);
-        group.add(pad);
-    }
-}
-
-function buildSpectatorStands(group, mats) {
-    // Behind home plate (main grandstand)
-    const standDepth = 120;
-    const standHeight = 60;
-    const tiers = 4;
-    const tierHeight = standHeight / tiers;
-    const tierDepth = standDepth / tiers;
-
-    for (let tier = 0; tier < tiers; tier++) {
-        const y = tier * tierHeight;
-        const z = -FIELD.homePlateToBackstop - tier * tierDepth;
-        const width = 250 + tier * 40;
-        const standGeo = new THREE.BoxGeometry(width, tierHeight, tierDepth);
-        const mat = tier % 2 === 0 ? mats.seats : mats.seatsGold;
-        const stand = new THREE.Mesh(standGeo, mat);
-        stand.position.set(0, y + tierHeight / 2, z - tierDepth / 2);
-        stand.castShadow = true;
-        stand.receiveShadow = true;
-        group.add(stand);
-    }
-
-    // 1st base side stands (FIXED ANGLE)
-    buildSideStand(group, mats, 1);
-    // 3rd base side stands (FIXED ANGLE)
-    buildSideStand(group, mats, -1);
-    // Outfield stands
-    buildOutfieldStands(group, mats);
-}
-
-function buildSideStand(group, mats, side) {
-    // side: +1 = 1st base (right/+X), -1 = 3rd base (left/-X)
-    const tiers = 3;
-    const tierHeight = 15;
-    const tierDepth = 25;
-    const standLength = 300;
-
-    // Foul line runs at 45° from home plate
-    // Stands should be OUTSIDE the foul line, PARALLEL to the foul line
-    const foulLineAngle = side * Math.PI / 4; // 45° or -45°
-
-    // Direction perpendicular to foul line, pointing AWAY from field (into foul territory)
-    const perpOutX = Math.cos(foulLineAngle) * side;
-    const perpOutZ = -Math.sin(foulLineAngle) * side;
-
-    for (let tier = 0; tier < tiers; tier++) {
-        const y = tier * tierHeight;
-
-        // Center of the stand along the foul line direction
-        const foulLineCenterDist = 180; // How far along the foul line from HP
-        const standBackDist = 110 + tier * tierDepth; // perpendicular distance from foul line
-
-        // Position along foul line
-        const alongX = Math.sin(foulLineAngle) * foulLineCenterDist;
-        const alongZ = Math.cos(foulLineAngle) * foulLineCenterDist;
-
-        // Offset perpendicular to foul line (outward from field)
-        const offsetX = perpOutX * standBackDist;
-        const offsetZ = perpOutZ * standBackDist;
-
-        const standGeo = new THREE.BoxGeometry(tierDepth, tierHeight, standLength);
-        const mat = tier === 0 ? mats.seats : tier === 1 ? mats.seatsGold : mats.seatsRed;
-        const stand = new THREE.Mesh(standGeo, mat);
-
-        stand.position.x = alongX + offsetX;
-        stand.position.z = alongZ + offsetZ;
-        stand.position.y = y + tierHeight / 2;
-
-        // Rotate so the long axis (local Z = 300ft) runs PARALLEL to the foul line
-        // rotation.y = foulLineAngle makes local Z point along (sin(angle), cos(angle)) = foul line direction
-        stand.rotation.y = foulLineAngle;
-
-        stand.castShadow = true;
-        stand.receiveShadow = true;
-        group.add(stand);
-    }
-}
-
-function buildOutfieldStands(group, mats) {
-    const segments = 12;
-    const startAngle = -Math.PI / 3.5;
-    const endAngle = Math.PI / 3.5;
-    const baseRadius = FIELD.fenceDistCF + 20;
-
-    for (let tier = 0; tier < 3; tier++) {
-        const radius = baseRadius + tier * 25;
-        const y = tier * 15;
-        const height = 15;
-
-        for (let i = 0; i < segments; i++) {
-            const angle = startAngle + (endAngle - startAngle) * (i + 0.5) / segments;
-            const segAngle = (endAngle - startAngle) / segments;
-            const segWidth = radius * segAngle * 1.05;
-
-            const geo = new THREE.BoxGeometry(segWidth, height, 25);
-            const mat = tier === 1 ? mats.seatsGold : mats.seats;
-            const stand = new THREE.Mesh(geo, mat);
-            stand.position.set(
-                Math.sin(angle) * radius,
-                y + height / 2,
-                Math.cos(angle) * radius
-            );
-            stand.rotation.y = angle + Math.PI;
-            stand.castShadow = true;
-            stand.receiveShadow = true;
-            group.add(stand);
-        }
-    }
-}
-
-function buildScoreboard(group, mats) {
-    const sbWidth = 80, sbHeight = 40, sbDepth = 3;
-    const sbDist = FIELD.fenceDistCF + 80;
-
-    const sbGeo = new THREE.BoxGeometry(sbWidth, sbHeight, sbDepth);
-    const scoreboard = new THREE.Mesh(sbGeo, mats.scoreboard);
-    scoreboard.position.set(0, sbHeight / 2 + 30, sbDist);
-    scoreboard.castShadow = true;
-    group.add(scoreboard);
-
-    const frameGeo = new THREE.BoxGeometry(sbWidth + 4, sbHeight + 4, sbDepth + 1);
-    const frame = new THREE.Mesh(frameGeo, mats.metal);
-    frame.position.set(0, sbHeight / 2 + 30, sbDist + 0.5);
-    group.add(frame);
-
-    [-sbWidth / 3, sbWidth / 3].forEach(xOffset => {
-        const pillarGeo = new THREE.BoxGeometry(3, 30, 3);
-        const pillar = new THREE.Mesh(pillarGeo, mats.concreteDark);
-        pillar.position.set(xOffset, 15, sbDist);
-        group.add(pillar);
-    });
-}
-
-function buildLightTowers(group, scene, mats) {
-    const lightPositions = [
-        { x: -200, z: -40, angle: Math.PI / 6 },
-        { x: 200, z: -40, angle: -Math.PI / 6 },
-        { x: -250, z: 200, angle: Math.PI / 4 },
-        { x: 250, z: 200, angle: -Math.PI / 4 },
-        { x: -150, z: 380, angle: Math.PI / 3 },
-        { x: 150, z: 380, angle: -Math.PI / 3 },
-    ];
-    const towerHeight = 120;
-
-    lightPositions.forEach((pos) => {
-        const poleGeo = new THREE.CylinderGeometry(1.5, 2.5, towerHeight, 8);
-        const pole = new THREE.Mesh(poleGeo, mats.lightPole);
-        pole.position.set(pos.x, towerHeight / 2, pos.z);
-        pole.castShadow = true;
-        group.add(pole);
-
-        const bankGeo = new THREE.BoxGeometry(20, 8, 5);
-        const bankMat = new THREE.MeshStandardMaterial({
-            color: 0xeeeeee, emissive: 0xffffcc, emissiveIntensity: 1.0, roughness: 0.3,
-        });
-        const bank = new THREE.Mesh(bankGeo, bankMat);
-        bank.position.set(pos.x, towerHeight + 4, pos.z);
-        bank.rotation.y = pos.angle;
-        group.add(bank);
-
-        const spotLight = new THREE.SpotLight(0xfff5e0, 3, 600, Math.PI / 4, 0.5, 1);
-        spotLight.position.set(pos.x, towerHeight + 4, pos.z);
-        spotLight.target.position.set(0, 0, FIELD.pitcherMoundDist);
-        spotLight.castShadow = true;
-        spotLight.shadow.mapSize.width = 1024;
-        spotLight.shadow.mapSize.height = 1024;
-        scene.add(spotLight);
-        scene.add(spotLight.target);
-    });
-}
-
-function buildCitySkyline(group, mats) {
-    const rng = mulberry32(42);
-    const numBuildings = 2000;
-    const geometry = new THREE.BoxGeometry(1, 1, 1);
-    const materials = [mats.building, mats.buildingLight];
-    const meshes = materials.map(mat => {
-        const mesh = new THREE.InstancedMesh(geometry, mat, numBuildings);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        group.add(mesh);
-        return mesh;
-    });
-
-    const dummy = new THREE.Object3D();
-    const counts = [0, 0];
-
-    for (let i = 0; i < numBuildings; i++) {
-        const distForm = rng();
-        const dist = 600 + Math.pow(distForm, 3) * 20000;
-        const angle = rng() * Math.PI * 2;
-        const x = Math.sin(angle) * dist;
-        const z = Math.cos(angle) * dist;
-        const width = 20 + rng() * 60;
-        const depth = 20 + rng() * 60;
-        const height = 40 + rng() * 300;
-
-        dummy.position.set(x, height / 2, z);
-        dummy.scale.set(width, height, depth);
-        dummy.rotation.y = rng() * Math.PI;
-        dummy.updateMatrix();
-
-        const matIndex = i % 2;
-        meshes[matIndex].setMatrixAt(counts[matIndex]++, dummy.matrix);
-    }
-
-    meshes.forEach((mesh, idx) => {
-        mesh.count = counts[idx];
-        mesh.instanceMatrix.needsUpdate = true;
-    });
-}
-
+const EARTH_R = 20925721;
+const EARTH_R_POLAR = 20855567;
+const ATMO_THICKNESS = 328084;
+
+// ========== SEEDED RNG ==========
 function mulberry32(seed) {
     return function () {
         seed |= 0; seed = seed + 0x6D2B79F5 | 0;
@@ -922,4 +24,521 @@ function mulberry32(seed) {
         t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
         return ((t ^ t >>> 14) >>> 0) / 4294967296;
     };
+}
+
+// Simple 2D noise from seed (value noise with interpolation)
+function makeNoise2D(seed) {
+    const rng = mulberry32(seed);
+    const SIZE = 256;
+    const table = new Float32Array(SIZE * SIZE);
+    for (let i = 0; i < SIZE * SIZE; i++) table[i] = rng();
+
+    function get(ix, iy) {
+        return table[((ix % SIZE) + SIZE) % SIZE + (((iy % SIZE) + SIZE) % SIZE) * SIZE];
+    }
+
+    return function noise(x, y) {
+        const ix = Math.floor(x), iy = Math.floor(y);
+        const fx = x - ix, fy = y - iy;
+        const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+        const a = get(ix, iy), b = get(ix + 1, iy);
+        const c = get(ix, iy + 1), d = get(ix + 1, iy + 1);
+        return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
+    };
+}
+
+function fbm(noise, x, y, octaves = 5) {
+    let val = 0, amp = 0.5, freq = 1, total = 0;
+    for (let i = 0; i < octaves; i++) {
+        val += noise(x * freq, y * freq) * amp;
+        total += amp; amp *= 0.5; freq *= 2;
+    }
+    return val / total;
+}
+
+// ========== MATERIALS ==========
+function createMaterials() {
+    const m = (c, r = 0.85) => new THREE.MeshStandardMaterial({ color: c, roughness: r, metalness: 0 });
+    return {
+        grass: m(0x3a7d44), grassDark: m(0x2d6b35), dirt: m(0xcd853f, 0.9),
+        dirtMound: m(0xc48039), warningTrack: m(0xa86a2f, 0.9),
+        chalk: m(0xffffff, 0.7), fence: m(0x1a4522, 0.4),
+        rubber: m(0xeeeeee, 0.5), base: m(0xffffff, 0.5),
+        scoreboard: new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.3, metalness: 0.8 }),
+        metal: new THREE.MeshStandardMaterial({ color: 0x9999aa, roughness: 0.3, metalness: 0.9 }),
+        concreteDark: m(0x666677, 0.8),
+        lightPole: new THREE.MeshStandardMaterial({ color: 0x888899, roughness: 0.3, metalness: 0.8 }),
+    };
+}
+
+// ========== MAIN BUILD ==========
+export function buildStadium(scene) {
+    const mats = createMaterials();
+    const g = new THREE.Group();
+    g.name = 'stadium';
+
+    buildEarth(g);
+    buildAtmosphere(g);
+    buildSpaceEnvironment(scene);
+    buildProceduralWorld(g);
+    buildNightLighting(scene);
+
+    // Field
+    buildFieldSurface(g, mats);
+    buildBasePaths(g, mats);
+    buildPitcherMound(g, mats);
+    buildBases(g, mats);
+    buildFoulLines(g, mats);
+    buildHomePlateArea(g, mats);
+    buildWarningTrack(g, mats);
+    buildOutfieldFence(g, mats);
+    buildScoreboard(g, mats);
+    buildLightTowers(g, scene, mats);
+
+    scene.add(g);
+    return g;
+}
+
+// ========== NIGHT LIGHTING ==========
+function buildNightLighting(scene) {
+    // Moonlight (dim directional)
+    const moon = new THREE.DirectionalLight(0x8899cc, 0.8);
+    moon.position.set(-200, 400, -100);
+    scene.add(moon);
+
+    // Strong ambient so the field isn't pitch black
+    scene.add(new THREE.AmbientLight(0x334466, 1.5));
+
+    // Hemisphere: dark blue sky + dark ground
+    scene.add(new THREE.HemisphereLight(0x223355, 0x111111, 1.0));
+}
+
+// ========== EARTH ==========
+function buildEarth(g) {
+    const ps = EARTH_R_POLAR / EARTH_R;
+    const geo = new THREE.SphereGeometry(EARTH_R, 96, 96);
+    const mat = new THREE.MeshStandardMaterial({ color: 0x1a3366, roughness: 0.8 });
+    const earth = new THREE.Mesh(geo, mat);
+    earth.scale.set(1, ps, 1);
+    earth.position.y = -EARTH_R;
+    earth.receiveShadow = true;
+    earth.name = 'earth';
+    g.add(earth);
+}
+
+// ========== ATMOSPHERE ==========
+function buildAtmosphere(g) {
+    const r = EARTH_R + ATMO_THICKNESS;
+    const ps = EARTH_R_POLAR / EARTH_R;
+    const mat = new THREE.ShaderMaterial({
+        vertexShader: `
+            varying vec3 vNorm; varying vec3 vWorldPos;
+            void main(){
+                vNorm=normalize(normalMatrix*normal);
+                vWorldPos=(modelMatrix*vec4(position,1.0)).xyz;
+                gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
+            }`,
+        fragmentShader: `
+            varying vec3 vNorm; varying vec3 vWorldPos;
+            void main(){
+                float rim=1.0-max(0.0,dot(vNorm,normalize(cameraPosition-vWorldPos)));
+                rim=pow(rim,3.0);
+                vec3 c=mix(vec3(0.2,0.4,0.8),vec3(0.1,0.3,0.9),rim);
+                gl_FragColor=vec4(c,rim*0.3);
+            }`,
+        transparent: true, side: THREE.BackSide, depthWrite: false, blending: THREE.AdditiveBlending,
+    });
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(r, 64, 64), mat);
+    mesh.scale.set(1, ps, 1); mesh.position.y = -EARTH_R;
+    mesh.name = 'atmosphere'; g.add(mesh);
+}
+
+// ========== SPACE ==========
+function buildSpaceEnvironment(scene) {
+    const SKY = 5e9;
+    // Stars
+    const rng = mulberry32(12345);
+    const N = 15000;
+    const pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) {
+        const th = Math.acos(2 * rng() - 1), ph = rng() * Math.PI * 2, r = SKY * (0.8 + rng() * 0.4);
+        pos[i * 3] = r * Math.sin(th) * Math.cos(ph);
+        pos[i * 3 + 1] = r * Math.sin(th) * Math.sin(ph);
+        pos[i * 3 + 2] = r * Math.cos(th);
+        const t = rng();
+        if (t < 0.5) { col[i * 3] = 1; col[i * 3 + 1] = 1; col[i * 3 + 2] = 1; }
+        else if (t < 0.7) { col[i * 3] = 0.7; col[i * 3 + 1] = 0.8; col[i * 3 + 2] = 1; }
+        else if (t < 0.85) { col[i * 3] = 1; col[i * 3 + 1] = 0.95; col[i * 3 + 2] = 0.7; }
+        else { col[i * 3] = 1; col[i * 3 + 1] = 0.6; col[i * 3 + 2] = 0.3; }
+    }
+    const sg = new THREE.BufferGeometry();
+    sg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    sg.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    scene.add(new THREE.Points(sg, new THREE.PointsMaterial({
+        size: 2000000, vertexColors: true, transparent: true, opacity: 0.9,
+        sizeAttenuation: true, depthWrite: false,
+    })));
+
+    // Milky Way band
+    const rng2 = mulberry32(77777);
+    const M = 8000, mp = new Float32Array(M * 3), mc = new Float32Array(M * 3);
+    for (let i = 0; i < M; i++) {
+        const ba = (rng2() - 0.5) * 0.3, la = rng2() * Math.PI * 2;
+        let x = SKY * 0.9 * Math.cos(la) * Math.cos(ba);
+        let y = SKY * 0.9 * Math.sin(ba);
+        let z = SKY * 0.9 * Math.sin(la) * Math.cos(ba);
+        const tilt = Math.PI / 3;
+        const ry = y * Math.cos(tilt) - z * Math.sin(tilt);
+        const rz = y * Math.sin(tilt) + z * Math.cos(tilt);
+        mp[i * 3] = x; mp[i * 3 + 1] = ry; mp[i * 3 + 2] = rz;
+        const b = 0.4 + rng2() * 0.4;
+        mc[i * 3] = b; mc[i * 3 + 1] = b * 0.95; mc[i * 3 + 2] = b;
+    }
+    const mg = new THREE.BufferGeometry();
+    mg.setAttribute('position', new THREE.BufferAttribute(mp, 3));
+    mg.setAttribute('color', new THREE.BufferAttribute(mc, 3));
+    scene.add(new THREE.Points(mg, new THREE.PointsMaterial({
+        size: 1200000, vertexColors: true, transparent: true, opacity: 0.6,
+        sizeAttenuation: true, depthWrite: false,
+    })));
+
+    // Moon
+    const moonGeo = new THREE.SphereGeometry(5.7e6, 24, 24);
+    const moonMesh = new THREE.Mesh(moonGeo, new THREE.MeshStandardMaterial({ color: 0xddddcc, roughness: 0.9 }));
+    moonMesh.position.set(8e8, 1e9, 3e8);
+    scene.add(moonMesh);
+
+    // Planets (small dots)
+    [[0xcc5533, 8e10, [-.8, .2, .6]], [0xddbb88, 1.5e11, [.5, .1, -.8]], [0xffffee, 3e10, [.6, .4, .7]]].forEach(([c, d, dir]) => {
+        const m = new THREE.Mesh(new THREE.SphereGeometry(d * 0.003, 12, 12), new THREE.MeshBasicMaterial({ color: c }));
+        m.position.set(dir[0] * d, dir[1] * d, dir[2] * d);
+        scene.add(m);
+    });
+}
+
+// ========== PROCEDURAL WORLD ==========
+function buildProceduralWorld(group) {
+    const SEED = 42;
+    const noise = makeNoise2D(SEED);
+    const noise2 = makeNoise2D(SEED + 100);
+    const rng = mulberry32(SEED + 200);
+
+    // Terrain as a large displaced plane
+    const terrainSize = 80000; // 80,000 ft (~15 miles) visible area
+    const segments = 200;
+    const geo = new THREE.PlaneGeometry(terrainSize, terrainSize, segments, segments);
+    const posAttr = geo.attributes.position;
+
+    // Height + color
+    const colors = new Float32Array(posAttr.count * 3);
+    const scale = 0.0003; // noise scale
+
+    for (let i = 0; i < posAttr.count; i++) {
+        const x = posAttr.getX(i), y = posAttr.getY(i);
+        // Distance from stadium center (to keep stadium area flat)
+        const dist = Math.sqrt(x * x + y * y);
+        const stadiumGuard = Math.max(0, Math.min(1, (dist - 600) / 400));
+
+        // Multi-octave terrain height
+        let h = fbm(noise, x * scale, y * scale, 6);
+        // Create varied terrain: mountains, valleys, plains
+        const mountainFactor = fbm(noise2, x * scale * 0.5, y * scale * 0.5, 3);
+        h = h * (200 + mountainFactor * 1500) - 100;
+        // Ocean: clamp negative heights to sea level (subtle)
+        const isOcean = h < -20;
+        if (h < -20) h = -20;
+        h *= stadiumGuard; // flatten near stadium
+
+        posAttr.setZ(i, h);
+
+        // Color by biome
+        let r, g, b;
+        if (isOcean && stadiumGuard > 0.5) {
+            r = 0.05; g = 0.12; b = 0.25; // dark ocean at night
+        } else if (h > 800 * stadiumGuard) {
+            r = 0.35; g = 0.35; b = 0.38; // mountain/rock
+        } else if (h > 300 * stadiumGuard) {
+            const t = fbm(noise2, x * scale * 2, y * scale * 2, 2);
+            if (t > 0.55) { r = 0.15; g = 0.25; b = 0.1; } // forest (dark green at night)
+            else { r = 0.12; g = 0.2; b = 0.08; } // grassland
+        } else {
+            // Low plains - mix of grass and developed areas
+            const urban = fbm(noise2, x * scale * 3, y * scale * 3, 2);
+            if (urban > 0.6 && dist > 1000) {
+                r = 0.15; g = 0.14; b = 0.13; // urban grey
+            } else {
+                r = 0.1; g = 0.18; b = 0.06; // dark grass at night
+            }
+        }
+        colors[i * 3] = r; colors[i * 3 + 1] = g; colors[i * 3 + 2] = b;
+    }
+
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geo.computeVertexNormals();
+
+    const terrainMat = new THREE.MeshStandardMaterial({
+        vertexColors: true, roughness: 0.9, metalness: 0,
+    });
+    const terrain = new THREE.Mesh(geo, terrainMat);
+    terrain.rotation.x = -Math.PI / 2;
+    terrain.position.y = -0.5;
+    terrain.receiveShadow = true;
+    terrain.name = 'terrain';
+    group.add(terrain);
+
+    // City lights (instanced small emissive boxes on urban areas)
+    buildCityLights(group, noise, noise2, rng);
+
+    // Road network (lines on terrain)
+    buildRoads(group, noise, rng);
+
+    // Cloud layer
+    buildClouds(group, noise2);
+}
+
+function buildCityLights(group, noise, noise2, rng) {
+    const N = 3000;
+    const geo = new THREE.BoxGeometry(1, 1, 1);
+    const mat = new THREE.MeshStandardMaterial({
+        color: 0xffeecc, emissive: 0xffaa44, emissiveIntensity: 0.8, roughness: 0.5,
+    });
+    const mesh = new THREE.InstancedMesh(geo, mat, N);
+    const dummy = new THREE.Object3D();
+    let count = 0;
+    const scale = 0.0003;
+
+    for (let i = 0; i < N * 3 && count < N; i++) {
+        const x = (rng() - 0.5) * 60000;
+        const z = (rng() - 0.5) * 60000;
+        const dist = Math.sqrt(x * x + z * z);
+        if (dist < 800) continue; // skip stadium area
+
+        // Only place in urban zones
+        const urban = fbm(noise2, x * scale * 3, z * scale * 3, 2);
+        if (urban < 0.55) continue;
+
+        const h = Math.max(0, fbm(noise, x * scale, z * scale, 6) *
+            (200 + fbm(noise2, x * scale * 0.5, z * scale * 0.5, 3) * 1500) - 100);
+
+        const bw = 15 + rng() * 40;
+        const bh = 10 + rng() * 80 * urban;
+        const bd = 15 + rng() * 40;
+
+        dummy.position.set(x, h + bh / 2, z);
+        dummy.scale.set(bw, bh, bd);
+        dummy.rotation.y = rng() * Math.PI;
+        dummy.updateMatrix();
+        mesh.setMatrixAt(count++, dummy.matrix);
+    }
+    mesh.count = count;
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.name = 'cityLights';
+    group.add(mesh);
+}
+
+function buildRoads(group, noise, rng) {
+    const roadMat = new THREE.LineBasicMaterial({ color: 0x555544, linewidth: 2, transparent: true, opacity: 0.6 });
+    const scale = 0.0003;
+
+    // Generate grid-ish road network with noise displacement
+    for (let r = 0; r < 20; r++) {
+        const pts = [];
+        const isHoriz = r < 10;
+        const basePos = (r % 10 - 5) * 6000;
+
+        for (let s = 0; s <= 30; s++) {
+            const t = (s / 30 - 0.5) * 60000;
+            let x = isHoriz ? t : basePos + fbm(noise, t * 0.0001, basePos * 0.0001, 2) * 800;
+            let z = isHoriz ? basePos + fbm(noise, basePos * 0.0001, t * 0.0001, 2) * 800 : t;
+            const dist = Math.sqrt(x * x + z * z);
+            if (dist < 600) continue;
+            const h = Math.max(0, fbm(noise, x * scale, z * scale, 6) *
+                (200 + fbm(noise, x * scale * 0.5, z * scale * 0.5, 3) * 1500) - 100);
+            pts.push(new THREE.Vector3(x, h + 2, z));
+        }
+
+        if (pts.length >= 2) {
+            const g2 = new THREE.BufferGeometry().setFromPoints(pts);
+            group.add(new THREE.Line(g2, roadMat));
+        }
+    }
+}
+
+function buildClouds(group, noise) {
+    // Cloud layer at ~5000 ft as translucent instanced planes
+    const N = 400;
+    const geo = new THREE.PlaneGeometry(1, 1);
+    const mat = new THREE.MeshStandardMaterial({
+        color: 0x445566, transparent: true, opacity: 0.15,
+        roughness: 1, metalness: 0, side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.InstancedMesh(geo, mat, N);
+    const dummy = new THREE.Object3D();
+    const rng = mulberry32(9999);
+
+    for (let i = 0; i < N; i++) {
+        const x = (rng() - 0.5) * 80000;
+        const z = (rng() - 0.5) * 80000;
+        const cloudDensity = fbm(noise, x * 0.00005, z * 0.00005, 3);
+        if (cloudDensity < 0.45) { mesh.setMatrixAt(i, new THREE.Matrix4()); continue; }
+
+        const w = 500 + rng() * 2000;
+        const h = 500 + rng() * 1500;
+        dummy.position.set(x, 4000 + rng() * 2000, z);
+        dummy.scale.set(w, h, 1);
+        dummy.rotation.x = -Math.PI / 2;
+        dummy.rotation.z = rng() * Math.PI;
+        dummy.updateMatrix();
+        mesh.setMatrixAt(i, dummy.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.name = 'clouds';
+    group.add(mesh);
+}
+
+// ========== FIELD BUILDERS ==========
+function buildFieldSurface(g, mats) {
+    // Local grass patch
+    const local = new THREE.Mesh(new THREE.CircleGeometry(600, 64), mats.grass);
+    local.rotation.x = -Math.PI / 2; local.position.y = 0.01; local.receiveShadow = true;
+    g.add(local);
+
+    // Outfield
+    const of_ = new THREE.Mesh(new THREE.CircleGeometry(FIELD.fieldRadius, 64, -Math.PI / 4, Math.PI / 2), mats.grass);
+    of_.rotation.x = -Math.PI / 2; of_.position.y = 0.02; of_.receiveShadow = true;
+    g.add(of_);
+
+    // Mowing pattern
+    for (let i = 0; i < 10; i++) {
+        const s = new THREE.Mesh(new THREE.PlaneGeometry(20, FIELD.fieldRadius), i % 2 === 0 ? mats.grass : mats.grassDark);
+        s.rotation.x = -Math.PI / 2;
+        s.position.set((i - 4.5) * 20, 0.025, FIELD.pitcherMoundDist + 100);
+        s.receiveShadow = true; g.add(s);
+    }
+
+    // Infield dirt + inner grass
+    const id_ = new THREE.Mesh(new THREE.CircleGeometry(FIELD.infieldDirtRadius, 64), mats.dirt);
+    id_.rotation.x = -Math.PI / 2; id_.position.set(0, 0.03, FIELD.pitcherMoundDist); id_.receiveShadow = true;
+    g.add(id_);
+    const ig = new THREE.Mesh(new THREE.CircleGeometry(70, 64), mats.grass);
+    ig.rotation.x = -Math.PI / 2; ig.position.set(0, 0.04, FIELD.pitcherMoundDist); ig.receiveShadow = true;
+    g.add(ig);
+}
+
+function buildBasePaths(g, mats) {
+    const pw = 6, bd = FIELD.baseDist, hd = bd * Math.sqrt(2) / 2;
+    const pg = new THREE.PlaneGeometry(pw, bd);
+    [[hd / 2, hd / 2, -Math.PI / 4], [-hd / 2, hd / 2, Math.PI / 4],
+    [hd / 2, bd + hd / 2 - bd / 2, Math.PI / 4], [-hd / 2, bd + hd / 2 - bd / 2, -Math.PI / 4]].forEach(([x, z, rz]) => {
+        const m = new THREE.Mesh(pg.clone(), mats.dirt);
+        m.rotation.x = -Math.PI / 2; m.rotation.z = rz;
+        m.position.set(x, 0.035, z); m.receiveShadow = true; g.add(m);
+    });
+}
+
+function buildPitcherMound(g, mats) {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(FIELD.moundRadius, FIELD.moundRadius + 2, FIELD.moundHeight, 32), mats.dirtMound);
+    m.position.set(0, FIELD.moundHeight / 2, FIELD.pitcherMoundDist); m.castShadow = true; m.receiveShadow = true; g.add(m);
+    const r = new THREE.Mesh(new THREE.BoxGeometry(2, 0.15, 0.5), mats.rubber);
+    r.position.set(0, FIELD.moundHeight + 0.075, FIELD.pitcherMoundDist); r.castShadow = true; g.add(r);
+}
+
+function buildBases(g, mats) {
+    const d = FIELD.baseDist * Math.sqrt(2) / 2;
+    // Home plate
+    const hs = new THREE.Shape();
+    const s = 17 / 12 / 2;
+    hs.moveTo(0, s); hs.lineTo(s, s * 0.5); hs.lineTo(s, -s * 0.5); hs.lineTo(-s, -s * 0.5); hs.lineTo(-s, s * 0.5); hs.closePath();
+    const hp = new THREE.Mesh(new THREE.ExtrudeGeometry(hs, { depth: 0.02, bevelEnabled: false }), mats.base);
+    hp.rotation.x = -Math.PI / 2; hp.position.set(0, 0.05, 0); hp.castShadow = true; g.add(hp);
+    // Bases
+    const bg = new THREE.BoxGeometry(15 / 12, 0.25, 15 / 12);
+    [[d, d], [0, d * 2], [-d, d]].forEach(([x, z]) => {
+        const b = new THREE.Mesh(bg.clone(), mats.base);
+        b.position.set(x, 0.125, z); b.rotation.y = Math.PI / 4; b.castShadow = true; g.add(b);
+    });
+}
+
+function buildFoulLines(g, mats) {
+    const lw = 0.33, ll = FIELD.foulLineLength;
+    const lg = new THREE.PlaneGeometry(lw, ll);
+    [[-Math.PI / 4, 1], [Math.PI / 4, -1]].forEach(([rz, sx]) => {
+        const m = new THREE.Mesh(lg.clone(), mats.chalk);
+        m.rotation.x = -Math.PI / 2; m.rotation.z = rz;
+        m.position.set(sx * ll / 2 * Math.sin(Math.PI / 4), 0.04, ll / 2 * Math.cos(Math.PI / 4));
+        g.add(m);
+    });
+}
+
+function buildHomePlateArea(g, mats) {
+    const hd = new THREE.Mesh(new THREE.CircleGeometry(13, 32), mats.dirt);
+    hd.rotation.x = -Math.PI / 2; hd.position.set(0, 0.03, 0); hd.receiveShadow = true; g.add(hd);
+    const bw = 4, bl = 6, lw = 0.17;
+    [-1, 1].forEach(side => {
+        [{ w: lw, h: bl, x: side * (bw / 2 + 1.5), z: 0 }, { w: lw, h: bl, x: side * (bw / 2 + 1.5 + bw), z: 0 },
+        { w: bw, h: lw, x: side * (bw / 2 + 1.5 + bw / 2), z: bl / 2 }, { w: bw, h: lw, x: side * (bw / 2 + 1.5 + bw / 2), z: -bl / 2 }].forEach(e => {
+            const m = new THREE.Mesh(new THREE.PlaneGeometry(e.w, e.h), mats.chalk);
+            m.rotation.x = -Math.PI / 2; m.position.set(e.x, 0.04, e.z); g.add(m);
+        });
+    });
+}
+
+function buildWarningTrack(g, mats) {
+    const ir = FIELD.fenceDistCF - FIELD.warningTrackWidth, or = FIELD.fenceDistCF;
+    const shape = new THREE.Shape(), sa = -Math.PI / 4, ea = Math.PI / 4, seg = 48;
+    for (let i = 0; i <= seg; i++) { const a = sa + (ea - sa) * (i / seg); const x = Math.sin(a) * or, z = Math.cos(a) * or; i === 0 ? shape.moveTo(x, z) : shape.lineTo(x, z); }
+    for (let i = seg; i >= 0; i--) { const a = sa + (ea - sa) * (i / seg); shape.lineTo(Math.sin(a) * ir, Math.cos(a) * ir); }
+    shape.closePath();
+    const m = new THREE.Mesh(new THREE.ShapeGeometry(shape), mats.warningTrack);
+    m.rotation.x = -Math.PI / 2; m.position.y = 0.025; m.receiveShadow = true; g.add(m);
+}
+
+function buildOutfieldFence(g, mats) {
+    const pts = [
+        { a: -Math.PI / 4, d: FIELD.fenceDistRF, h: FIELD.fenceHeight }, { a: -Math.PI / 8, d: FIELD.fenceDistRCF, h: FIELD.fenceHeight },
+        { a: 0, d: FIELD.fenceDistCF, h: FIELD.fenceHeight }, { a: Math.PI / 8, d: FIELD.fenceDistLCF, h: FIELD.fenceHeight },
+        { a: Math.PI / 4, d: FIELD.fenceDistLF, h: FIELD.wallHeightLF },
+    ];
+    for (let i = 0; i < pts.length - 1; i++) {
+        const p1 = pts[i], p2 = pts[i + 1];
+        const x1 = Math.sin(p1.a) * p1.d, z1 = Math.cos(p1.a) * p1.d, x2 = Math.sin(p2.a) * p2.d, z2 = Math.cos(p2.a) * p2.d;
+        const dx = x2 - x1, dz = z2 - z1, len = Math.sqrt(dx * dx + dz * dz), mh = Math.max(p1.h, p2.h);
+        const f = new THREE.Mesh(new THREE.BoxGeometry(len, mh, 1), mats.fence);
+        f.position.set((x1 + x2) / 2, mh / 2, (z1 + z2) / 2); f.rotation.y = -Math.atan2(dz, dx);
+        f.castShadow = true; f.receiveShadow = true; g.add(f);
+        const pm = new THREE.MeshStandardMaterial({ color: 0xFFD700, roughness: 0.6, emissive: 0x554400, emissiveIntensity: 0.2 });
+        const pad = new THREE.Mesh(new THREE.BoxGeometry(len, 0.5, 1.2), pm);
+        pad.position.set((x1 + x2) / 2, mh + 0.25, (z1 + z2) / 2); pad.rotation.y = -Math.atan2(dz, dx); g.add(pad);
+    }
+}
+
+function buildScoreboard(g, mats) {
+    const w = 80, h = 40, d = 3, dist = FIELD.fenceDistCF + 80;
+    const sb = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mats.scoreboard);
+    sb.position.set(0, h / 2 + 30, dist); sb.castShadow = true; g.add(sb);
+    const fr = new THREE.Mesh(new THREE.BoxGeometry(w + 4, h + 4, d + 1), mats.metal);
+    fr.position.set(0, h / 2 + 30, dist + 0.5); g.add(fr);
+    [-w / 3, w / 3].forEach(x => { const p = new THREE.Mesh(new THREE.BoxGeometry(3, 30, 3), mats.concreteDark); p.position.set(x, 15, dist); g.add(p); });
+}
+
+function buildLightTowers(g, scene, mats) {
+    const lps = [
+        { x: -200, z: -40, a: Math.PI / 6 }, { x: 200, z: -40, a: -Math.PI / 6 },
+        { x: -250, z: 200, a: Math.PI / 4 }, { x: 250, z: 200, a: -Math.PI / 4 },
+        { x: -150, z: 380, a: Math.PI / 3 }, { x: 150, z: 380, a: -Math.PI / 3 },
+    ];
+    const th = 120;
+    lps.forEach(p => {
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 2.5, th, 8), mats.lightPole);
+        pole.position.set(p.x, th / 2, p.z); pole.castShadow = true; g.add(pole);
+        const bankMat = new THREE.MeshStandardMaterial({ color: 0xeeeeee, emissive: 0xffffcc, emissiveIntensity: 2.0, roughness: 0.3 });
+        const bank = new THREE.Mesh(new THREE.BoxGeometry(20, 8, 5), bankMat);
+        bank.position.set(p.x, th + 4, p.z); bank.rotation.y = p.a; g.add(bank);
+        // Night game: stronger spotlights
+        const sl = new THREE.SpotLight(0xfff5e0, 8, 800, Math.PI / 3.5, 0.4, 1);
+        sl.position.set(p.x, th + 4, p.z);
+        sl.target.position.set(0, 0, FIELD.pitcherMoundDist);
+        sl.castShadow = true; sl.shadow.mapSize.width = 1024; sl.shadow.mapSize.height = 1024;
+        scene.add(sl); scene.add(sl.target);
+    });
 }
