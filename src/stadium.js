@@ -221,53 +221,96 @@ function buildProceduralWorld(group) {
     const SEED = 42;
     const noise = makeNoise2D(SEED);
     const noise2 = makeNoise2D(SEED + 100);
-    const rng = mulberry32(SEED + 200);
+    const noise3 = makeNoise2D(SEED + 200);
+    const rng = mulberry32(SEED + 300);
 
-    // Terrain as a large displaced plane
-    const terrainSize = 80000; // 80,000 ft (~15 miles) visible area
-    const segments = 200;
+    const terrainSize = 250000; // ~47 miles across to see huge scale variations
+    const segments = 300;
     const geo = new THREE.PlaneGeometry(terrainSize, terrainSize, segments, segments);
     const posAttr = geo.attributes.position;
-
-    // Height + color
     const colors = new Float32Array(posAttr.count * 3);
-    const scale = 0.0003; // noise scale
 
     for (let i = 0; i < posAttr.count; i++) {
         const x = posAttr.getX(i), y = posAttr.getY(i);
-        // Distance from stadium center (to keep stadium area flat)
         const dist = Math.sqrt(x * x + y * y);
-        const stadiumGuard = Math.max(0, Math.min(1, (dist - 600) / 400));
+        // Ensure a perfectly flat area up to 1500ft, then gradually blend into terrain over the next 2000ft
+        const stadiumGuard = Math.max(0, Math.min(1, (dist - 1500) / 2000));
 
-        // Multi-octave terrain height
-        let h = fbm(noise, x * scale, y * scale, 6);
-        // Create varied terrain: mountains, valleys, plains
-        const mountainFactor = fbm(noise2, x * scale * 0.5, y * scale * 0.5, 3);
-        h = h * (200 + mountainFactor * 1500) - 100;
-        // Ocean: clamp negative heights to sea level (subtle)
-        const isOcean = h < -20;
-        if (h < -20) h = -20;
+        // Macro-scale: Continents, Oceans, Large Plains (very low frequency)
+        const macro = fbm(noise, x * 0.000008, y * 0.000008, 4); // 0 to 1
+
+        // Meso-scale: Mountains, Hills, Plateaus
+        const meso = fbm(noise2, x * 0.00004, y * 0.00004, 4);
+
+        // Micro-scale: Detail noise, sharp ridges (V-valleys)
+        const micro = fbm(noise3, x * 0.00015, y * 0.00015, 4);
+        const ridge = 1.0 - Math.abs(micro * 2.0 - 1.0); // 0 to 1 sharp ridges
+
+        let h = 0;
+        let biome = 'plain';
+
+        if (macro < 0.35) {
+            // Ocean / Sea
+            h = -200 + macro * 500;
+            biome = 'ocean';
+        } else if (macro > 0.65 && meso > 0.5) {
+            // High Mountains & Glaciers (U-shaped valleys via pow)
+            const uValley = Math.pow(meso, 2.0);
+            h = 500 + uValley * 8000 + ridge * 1500;
+            biome = (h > 6000) ? 'glacier' : 'mountain';
+        } else if (meso < 0.3 && macro > 0.45) {
+            // Plateaus & Mesas (Stepped terraces)
+            const steps = 6;
+            const terraced = Math.floor(meso * steps) / steps;
+            h = 200 + terraced * 3000 + micro * 100;
+            biome = 'plateau';
+        } else if (macro > 0.4 && macro < 0.45) {
+            // Coastline / Fjords / Rias
+            const fjord = Math.pow(Math.abs(meso * 2.0 - 1.0), 3.0);
+            h = -50 + fjord * 2000;
+            biome = 'coast';
+        } else {
+            // Plains, Hills, Valleys, Lakes
+            if (meso > 0.7) {
+                h = 100 + meso * 1500; // Hills
+                biome = 'hills';
+            } else if (meso < 0.2) {
+                h = -50 + meso * 200; // Lakes / Basins
+                biome = h < 0 ? 'lake' : 'valley';
+            } else {
+                h = 20 + micro * 150; // Great Plains
+                biome = 'plain';
+            }
+        }
+
+        // Clamp water
+        let isWater = h < 0;
+        if (h < 0) h = 0; // Flat water surface
         h *= stadiumGuard; // flatten near stadium
 
         posAttr.setZ(i, h);
 
-        // Color by biome
+        // Color by biome and height
         let r, g, b;
-        if (isOcean && stadiumGuard > 0.5) {
-            r = 0.05; g = 0.12; b = 0.25; // dark ocean at night
-        } else if (h > 800 * stadiumGuard) {
-            r = 0.35; g = 0.35; b = 0.38; // mountain/rock
-        } else if (h > 300 * stadiumGuard) {
-            const t = fbm(noise2, x * scale * 2, y * scale * 2, 2);
-            if (t > 0.55) { r = 0.15; g = 0.25; b = 0.1; } // forest (dark green at night)
-            else { r = 0.12; g = 0.2; b = 0.08; } // grassland
+        if (isWater && stadiumGuard > 0.5) {
+            r = 0.05; g = 0.12; b = 0.25; // water
+        } else if (biome === 'glacier') {
+            r = 0.8; g = 0.85; b = 0.9;   // snow/ice
+        } else if (biome === 'mountain') {
+            r = 0.25; g = 0.25; b = 0.28; // rock
+        } else if (biome === 'plateau') {
+            r = 0.3; g = 0.25; b = 0.15;  // dry dirt/mesa
+        } else if (biome === 'hills') {
+            r = 0.12; g = 0.22; b = 0.1;  // dark forest
+        } else if (biome === 'coast') {
+            r = 0.18; g = 0.2; b = 0.15;  // rocky coast
         } else {
-            // Low plains - mix of grass and developed areas
-            const urban = fbm(noise2, x * scale * 3, y * scale * 3, 2);
-            if (urban > 0.6 && dist > 1000) {
+            // Plains / Valleys -> check urban
+            const urban = fbm(noise3, x * 0.0001, y * 0.0001, 2);
+            if (urban > 0.65 || dist < 4000) { // Force urban near stadium
                 r = 0.15; g = 0.14; b = 0.13; // urban grey
             } else {
-                r = 0.1; g = 0.18; b = 0.06; // dark grass at night
+                r = 0.1; g = 0.18; b = 0.06; // grass
             }
         }
         colors[i * 3] = r; colors[i * 3 + 1] = g; colors[i * 3 + 2] = b;
@@ -276,9 +319,7 @@ function buildProceduralWorld(group) {
     geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     geo.computeVertexNormals();
 
-    const terrainMat = new THREE.MeshStandardMaterial({
-        vertexColors: true, roughness: 0.9, metalness: 0,
-    });
+    const terrainMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0 });
     const terrain = new THREE.Mesh(geo, terrainMat);
     terrain.rotation.x = -Math.PI / 2;
     terrain.position.y = -0.5;
@@ -286,87 +327,97 @@ function buildProceduralWorld(group) {
     terrain.name = 'terrain';
     group.add(terrain);
 
-    // City lights (instanced small emissive boxes on urban areas)
-    buildCityLights(group, noise, noise2, rng);
-
-    // Road network (lines on terrain)
+    buildCityLightsAndBuildings(group, noise, noise2, noise3, rng);
     buildRoads(group, noise, rng);
-
-    // Cloud layer
     buildClouds(group, noise2);
 }
 
-function buildCityLights(group, noise, noise2, rng) {
-    const N = 3000;
+function buildCityLightsAndBuildings(group, noise, noise2, noise3, rng) {
+    const N = 8000; // more city elements
     const geo = new THREE.BoxGeometry(1, 1, 1);
-    const mat = new THREE.MeshStandardMaterial({
+
+    // Two materials: one lit building, one dark building
+    const matLit = new THREE.MeshStandardMaterial({
         color: 0xffeecc, emissive: 0xffaa44, emissiveIntensity: 0.8, roughness: 0.5,
     });
-    const mesh = new THREE.InstancedMesh(geo, mat, N);
+    const matDark = new THREE.MeshStandardMaterial({ color: 0x222225, roughness: 0.8 });
+
+    const meshLit = new THREE.InstancedMesh(geo, matLit, Math.floor(N * 0.4));
+    const meshDark = new THREE.InstancedMesh(geo, matDark, Math.floor(N * 0.6));
+
     const dummy = new THREE.Object3D();
-    let count = 0;
-    const scale = 0.0003;
+    let cLit = 0, cDark = 0;
 
-    for (let i = 0; i < N * 3 && count < N; i++) {
-        const x = (rng() - 0.5) * 60000;
-        const z = (rng() - 0.5) * 60000;
+    for (let i = 0; i < N * 5 && (cLit < meshLit.count || cDark < meshDark.count); i++) {
+        // Distribute loosely near stadium or globally
+        let x, z;
+        if (rng() < 0.2) {
+            // Downtown around stadium (1500 to 7000 ft), using a power curve to avoid unnatural rings
+            const ang = rng() * Math.PI * 2;
+            const d = 1500 + Math.pow(rng(), 1.5) * 5500;
+            x = Math.cos(ang) * d;
+            z = Math.sin(ang) * d;
+        } else {
+            // Global distribution
+            x = (rng() - 0.5) * 200000;
+            z = (rng() - 0.5) * 200000;
+        }
+
         const dist = Math.sqrt(x * x + z * z);
-        if (dist < 800) continue; // skip stadium area
+        if (dist < 1500) continue; // Out of park + clearance
 
-        // Only place in urban zones
-        const urban = fbm(noise2, x * scale * 3, z * scale * 3, 2);
-        if (urban < 0.55) continue;
+        const urban = fbm(noise3, x * 0.0001, z * 0.0001, 2);
+        if (urban < 0.65 && dist > 7000) continue; // Must be urban or downtown
 
-        const h = Math.max(0, fbm(noise, x * scale, z * scale, 6) *
-            (200 + fbm(noise2, x * scale * 0.5, z * scale * 0.5, 3) * 1500) - 100);
+        // Approximate height (skip full terrain calc since we just need water check)
+        const macro = fbm(noise, x * 0.000008, z * 0.000008, 4);
+        if (macro < 0.35 && dist > 2000) continue; // don't build in ocean unless very close
 
-        const bw = 15 + rng() * 40;
-        const bh = 10 + rng() * 80 * urban;
-        const bd = 15 + rng() * 40;
+        const bw = 25 + rng() * 60;
+        const bd = 25 + rng() * 60;
+        // Limit heights organically
+        const distFactor = Math.max(0, 1 - (dist - 1500) / 5500);
+        const bh = 30 + rng() * 80 + Math.pow(rng(), 3.0) * 150 * distFactor;
 
-        dummy.position.set(x, h + bh / 2, z);
+        // We'll place them flat assuming urban areas are mostly plains
+        const terrainH = 0;
+
+        dummy.position.set(x, terrainH + bh / 2, z);
         dummy.scale.set(bw, bh, bd);
         dummy.rotation.y = rng() * Math.PI;
         dummy.updateMatrix();
-        mesh.setMatrixAt(count++, dummy.matrix);
+
+        if (rng() < 0.4 && cLit < meshLit.count) {
+            meshLit.setMatrixAt(cLit++, dummy.matrix);
+        } else if (cDark < meshDark.count) {
+            meshDark.setMatrixAt(cDark++, dummy.matrix);
+        }
     }
-    mesh.count = count;
-    mesh.instanceMatrix.needsUpdate = true;
-    mesh.name = 'cityLights';
-    group.add(mesh);
+    meshLit.count = cLit; meshLit.instanceMatrix.needsUpdate = true; group.add(meshLit);
+    meshDark.count = cDark; meshDark.instanceMatrix.needsUpdate = true; group.add(meshDark);
 }
 
 function buildRoads(group, noise, rng) {
-    const roadMat = new THREE.LineBasicMaterial({ color: 0x555544, linewidth: 2, transparent: true, opacity: 0.6 });
-    const scale = 0.0003;
-
-    // Generate grid-ish road network with noise displacement
-    for (let r = 0; r < 20; r++) {
+    const roadMat = new THREE.LineBasicMaterial({ color: 0x444433, linewidth: 2, transparent: true, opacity: 0.6 });
+    for (let r = 0; r < 30; r++) {
         const pts = [];
-        const isHoriz = r < 10;
-        const basePos = (r % 10 - 5) * 6000;
+        const isHoriz = r < 15;
+        const basePos = (r % 15 - 7.5) * 15000;
 
-        for (let s = 0; s <= 30; s++) {
-            const t = (s / 30 - 0.5) * 60000;
-            let x = isHoriz ? t : basePos + fbm(noise, t * 0.0001, basePos * 0.0001, 2) * 800;
-            let z = isHoriz ? basePos + fbm(noise, basePos * 0.0001, t * 0.0001, 2) * 800 : t;
+        for (let s = 0; s <= 50; s++) {
+            const t = (s / 50 - 0.5) * 200000;
+            let x = isHoriz ? t : basePos + fbm(noise, t * 0.00005, basePos * 0.00005, 2) * 2000;
+            let z = isHoriz ? basePos + fbm(noise, basePos * 0.00005, t * 0.00005, 2) * 2000 : t;
             const dist = Math.sqrt(x * x + z * z);
             if (dist < 600) continue;
-            const h = Math.max(0, fbm(noise, x * scale, z * scale, 6) *
-                (200 + fbm(noise, x * scale * 0.5, z * scale * 0.5, 3) * 1500) - 100);
-            pts.push(new THREE.Vector3(x, h + 2, z));
+            pts.push(new THREE.Vector3(x, 10, z)); // Simplified road height
         }
-
-        if (pts.length >= 2) {
-            const g2 = new THREE.BufferGeometry().setFromPoints(pts);
-            group.add(new THREE.Line(g2, roadMat));
-        }
+        if (pts.length >= 2) group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), roadMat));
     }
 }
 
 function buildClouds(group, noise) {
-    // Cloud layer at ~5000 ft as translucent instanced planes
-    const N = 400;
+    const N = 800;
     const geo = new THREE.PlaneGeometry(1, 1);
     const mat = new THREE.MeshStandardMaterial({
         color: 0x445566, transparent: true, opacity: 0.15,
@@ -377,14 +428,14 @@ function buildClouds(group, noise) {
     const rng = mulberry32(9999);
 
     for (let i = 0; i < N; i++) {
-        const x = (rng() - 0.5) * 80000;
-        const z = (rng() - 0.5) * 80000;
-        const cloudDensity = fbm(noise, x * 0.00005, z * 0.00005, 3);
+        const x = (rng() - 0.5) * 200000;
+        const z = (rng() - 0.5) * 200000;
+        const cloudDensity = fbm(noise, x * 0.00002, z * 0.00002, 3);
         if (cloudDensity < 0.45) { mesh.setMatrixAt(i, new THREE.Matrix4()); continue; }
 
-        const w = 500 + rng() * 2000;
-        const h = 500 + rng() * 1500;
-        dummy.position.set(x, 4000 + rng() * 2000, z);
+        const w = 2000 + rng() * 4000;
+        const h = 2000 + rng() * 4000;
+        dummy.position.set(x, 6000 + rng() * 3000, z);
         dummy.scale.set(w, h, 1);
         dummy.rotation.x = -Math.PI / 2;
         dummy.rotation.z = rng() * Math.PI;
@@ -392,7 +443,6 @@ function buildClouds(group, noise) {
         mesh.setMatrixAt(i, dummy.matrix);
     }
     mesh.instanceMatrix.needsUpdate = true;
-    mesh.name = 'clouds';
     group.add(mesh);
 }
 
